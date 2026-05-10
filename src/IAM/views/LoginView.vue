@@ -63,6 +63,7 @@ import { useAuthStore } from "../../Shared/stores/auth.js";
 const router = useRouter();
 const auth = useAuthStore();
 
+  // Variables reactivas para el estado del formulario
 const form = ref({ email: "", password: "" });
 const loading = ref(false);
 const error = ref("");
