@@ -3,7 +3,7 @@
   publish = "dist"
 
 [build.environment]
-  VITE_API_BASE_URL = "https://incleanhomebackend.onrender.com/api/v1"
+  VITE_API_BASE_URL = "https://incleanhomebackend.onrender.com/api"
 
 [[redirects]]
   from = "/*"
