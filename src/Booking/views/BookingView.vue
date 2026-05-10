@@ -176,7 +176,7 @@ const canBook = computed(() => selectedDay.value && form.value.serviceType && fo
 const monthLabel = computed(() => new Date(viewYear.value, viewMonth.value).toLocaleDateString("es-PE", { month:"long", year:"numeric" }));
 const daysInMonth = computed(() => new Date(viewYear.value, viewMonth.value + 1, 0).getDate());
 const startBlank = computed(() => new Date(viewYear.value, viewMonth.value, 1).getDay());
-const timeSlots = Array.from({ length: 25 }, (_, i) => `${String(Math.floor(i + 6)).padStart(2,"0")}:00`);
+const timeSlots = Array.from({ length: 18 }, (_, i) => `${String(Math.floor(i + 6)).padStart(2,"0")}:00`);
 
 function prevMonth() { if (viewMonth.value === 0) { viewMonth.value = 11; viewYear.value--; } else viewMonth.value--; }
 function nextMonth() { if (viewMonth.value === 11) { viewMonth.value = 0; viewYear.value++; } else viewMonth.value++; }
