@@ -52,11 +52,13 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+// Importación del store de autenticación (Pinia) y configuración de Axios (api)
 import { useAuthStore } from "../../Shared/stores/auth.js";
 import api from "../../Shared/api.js";
 
 const { t, locale } = useI18n();
-// Importación del store de autenticación (Pinia) y configuración de Axios (api)
+
+  // Inicialización de composables
 import { useAuthStore } from "../../Shared/stores/auth.js";
 const router = useRouter();
 const auth = useAuthStore();
