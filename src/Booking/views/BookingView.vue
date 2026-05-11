@@ -3,10 +3,11 @@
     <button @click="$router.back()" class="btn btn-secondary btn-sm mb-4">← {{ t('common.back') }}</button>
     <h1 class="page-title mb-6">{{ t('booking.title') }}</h1>
 
+    <!-- Show loading spinner while fetching worker data -->
     <div v-if="workerLoading" class="loader-wrapper"><div class="spinner"></div></div>
 
     <div v-else class="flex-col gap-5">
-      <!-- Worker summary -->
+      <!-- Display worker information -->
       <div class="card flex-row gap-4 worker-summary">
         <div class="worker-avatar-md avatar-blue">
           <span class="avatar-initial">{{ initials }}</span>
@@ -17,7 +18,7 @@
         </div>
       </div>
 
-      <!-- Service type -->
+      <!-- Select service type -->
       <div class="card">
         <label class="label-bold">{{ t('booking.serviceType') }}</label>
         <select v-model="form.serviceType" class="input-field mt-1">
@@ -25,9 +26,10 @@
         </select>
       </div>
 
-      <!-- Date & time -->
+      <!-- Date and time selection -->
       <div class="card">
         <h3 class="card-subtitle">📅 {{ t('booking.selectDate') }}</h3>
+        <!-- Calendar picker -->
         <div class="calendar">
           <div class="cal-header">
             <button @click="prevMonth" class="cal-nav">‹</button>
@@ -39,6 +41,7 @@
           </div>
           <div class="cal-grid">
             <div v-for="blank in startBlank" :key="'b'+blank"></div>
+            <!-- Day buttons -->
             <button v-for="day in daysInMonth" :key="day"
               @click="selectDay(day)"
               :disabled="isPast(day)"
@@ -48,6 +51,7 @@
           </div>
         </div>
 
+        <!-- Time selection -->
         <div class="grid-2-cols gap-3 mt-4">
           <div class="form-group">
             <label class="label-bold">{{ t('booking.startTime') }}</label>
@@ -63,10 +67,11 @@
           </div>
         </div>
 
+        <!-- Display hours calculated -->
         <div v-if="form.hours > 0" class="hours-info">{{ form.hours }} {{ t('booking.hours') }}</div>
       </div>
 
-      <!-- Address -->
+      <!-- Address and notes -->
       <div class="card">
         <label class="label-bold">{{ t('booking.address') }}</label>
         <input v-model="form.address" type="text" class="input-field mt-1" :placeholder="t('booking.address')" />
@@ -74,13 +79,15 @@
         <textarea v-model="form.notes" class="input-field mt-1 no-resize" rows="2"></textarea>
       </div>
 
-      <!-- Payment method -->
+      <!-- Payment method section -->
       <div class="card">
         <h3 class="card-subtitle">💳 {{ t('booking.paymentMethod') }}</h3>
+          <!-- Show add payment button if no methods available -->
           <div v-if="paymentMethods.length === 0" class="empty-state-small">
             <p class="muted-text mb-3">No tienes métodos de pago guardados</p>
             <button @click="showAddPayment = true" class="btn btn-outline btn-sm">+ {{ t('booking.addPaymentMethod') }}</button>
           </div>
+        <!-- Display available payment methods -->
         <div v-else class="flex-col gap-2">
           <label v-for="pm in paymentMethods" :key="pm.id" class="payment-option" :class="{ selected: form.paymentMethodId === pm.id }" @click="form.paymentMethodId = pm.id">
             <span class="payment-icon">{{ paymentIcon(pm.type) }}</span>
@@ -112,7 +119,7 @@
         </div>
       </div>
 
-      <!-- Summary -->
+      <!-- Booking summary -->
       <div class="card summary-card">
         <h3 class="card-title mb-4">Resumen</h3>
         <div class="summary-row"><span>{{ form.hours }}h × S/. {{ worker?.hourlyRate }}</span><span>S/. {{ subtotal.toFixed(2) }}</span></div>
@@ -124,8 +131,10 @@
         </div>
       </div>
 
+      <!-- Error message display -->
       <div v-if="error" class="alert error-box">{{ error }}</div>
 
+      <!-- Confirm booking button -->
       <button @click="handleBook" class="btn btn-primary btn-full btn-lg mt-4" :disabled="!canBook || submitting">
         <div v-if="submitting" class="spinner spinner-sm"></div>
         {{ submitting ? t('common.loading') : t('booking.confirm') }}
@@ -153,47 +162,61 @@ const submitting = ref(false);
 const error = ref("");
 const showAddPayment = ref(false);
 
+// Calendar state
 const today = new Date();
 const viewYear = ref(today.getFullYear());
 const viewMonth = ref(today.getMonth());
 const selectedDay = ref(null);
 
+// Booking form data
 const form = ref({ serviceType: "", startTime: "08:00", endTime: "10:00", address: "", notes: "", paymentMethodId: null, hours: 2 });
+// New payment method form
 const newPm = ref({ type: "cash", label: "", details: "" });
 
+// Payment types mapping
 const paymentTypes = computed(() => ({
   cash: t("booking.paymentTypes.cash"), card: t("booking.paymentTypes.card"),
   yape: t("booking.paymentTypes.yape"), plin: t("booking.paymentTypes.plin"),
   bank_transfer: t("booking.paymentTypes.bank_transfer"),
 }));
 
+// Computed properties for worker display
 const initials = computed(() => worker.value?.name?.split(" ").map(n => n[0]).slice(0,2).join("").toUpperCase() || "?");
+// Calculate pricing
 const subtotal = computed(() => (worker.value?.hourlyRate || 0) * form.value.hours);
 const platformFee = computed(() => subtotal.value * 0.10);
 const workerEarning = computed(() => subtotal.value - platformFee.value);
+// Check if booking can be confirmed
 const canBook = computed(() => selectedDay.value && form.value.serviceType && form.value.address && form.value.paymentMethodId && form.value.hours > 0);
 
+// Calendar utilities
 const monthLabel = computed(() => new Date(viewYear.value, viewMonth.value).toLocaleDateString("es-PE", { month:"long", year:"numeric" }));
 const daysInMonth = computed(() => new Date(viewYear.value, viewMonth.value + 1, 0).getDate());
 const startBlank = computed(() => new Date(viewYear.value, viewMonth.value, 1).getDay());
+// Generate time slots from 6:00 to 23:00
 const timeSlots = Array.from({ length: 18 }, (_, i) => `${String(Math.floor(i + 6)).padStart(2,"0")}:00`);
 
+// Navigation functions
 function prevMonth() { if (viewMonth.value === 0) { viewMonth.value = 11; viewYear.value--; } else viewMonth.value--; }
 function nextMonth() { if (viewMonth.value === 11) { viewMonth.value = 0; viewYear.value++; } else viewMonth.value++; }
 function selectDay(d) { selectedDay.value = d; }
+// Check if date is in the past
 function isPast(d) {
   const date = new Date(viewYear.value, viewMonth.value, d);
   return date < new Date(today.getFullYear(), today.getMonth(), today.getDate());
 }
+// Calculate hours between start and end time
 function calcHours() {
   const [sh, sm] = form.value.startTime.split(":").map(Number);
   const [eh, em] = form.value.endTime.split(":").map(Number);
   form.value.hours = Math.max(0, (eh * 60 + em - sh * 60 - sm) / 60);
 }
+// Get payment method icon
 function paymentIcon(type) {
   return { cash:"💵", card:"💳", yape:"📱", plin:"📲", bank_transfer:"🏦" }[type] || "💰";
 }
 
+// Add new payment method
 async function addPaymentMethod() {
   const { data } = await api.post("/payments/methods", newPm.value);
   paymentMethods.value.push(data);
@@ -202,6 +225,7 @@ async function addPaymentMethod() {
   newPm.value = { type:"cash", label:"", details:"" };
 }
 
+// Submit booking
 async function handleBook() {
   submitting.value = true;
   error.value = "";
@@ -225,6 +249,7 @@ async function handleBook() {
   } finally { submitting.value = false; }
 }
 
+// Load worker and payment methods on mount
 onMounted(async () => {
   const id = route.params.id;
   const [w, pm] = await Promise.all([api.get(`/workers/${id}`), api.get("/payments/methods")]);

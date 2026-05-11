@@ -2,16 +2,20 @@
   <div class="view-container">
     <h1 class="page-title mb-6">{{ t('nav.bookings') }}</h1>
 
+    <!-- Show loading spinner -->
     <div v-if="loading" class="loader-wrapper"><div class="spinner spinner-lg"></div></div>
 
+    <!-- Empty state if no bookings -->
     <div v-else-if="!bookings.length" class="card empty-state">
       <div class="empty-illustration">📅</div>
       <p class="empty-text">{{ t('dashboard.noBookings') }}</p>
       <router-link to="/client/search" class="btn btn-primary submit-btn">Buscar trabajadoras</router-link>
     </div>
 
+    <!-- Display booking list -->
     <div v-else class="booking-list">
       <div v-for="b in bookings" :key="b.id" class="card">
+        <!-- Booking header with worker info and status -->
         <div class="booking-header">
           <div class="worker-info">
             <div class="worker-avatar-sm avatar-blue">
@@ -22,37 +26,45 @@
               <div class="worker-service">{{ t(`worker.services.${b.serviceType}`) }}</div>
             </div>
           </div>
+          <!-- Status badge -->
           <span :class="statusBadge(b.status)">{{ t(`booking.status.${b.status}`) }}</span>
         </div>
 
+        <!-- Booking details: date, time, address -->
         <div class="meta-row">
           <span class="meta-item">📅 {{ b.date }}</span>
           <span class="meta-item">⏰ {{ b.startTime }} – {{ b.endTime }}</span>
           <span class="meta-item">📍 {{ b.address?.slice(0,30) }}...</span>
         </div>
 
+        <!-- Footer with total and action buttons -->
         <div class="card-footer">
           <div>
             <span class="total-label">Total: </span>
             <span class="total-amount">S/. {{ b.totalAmount }}</span>
           </div>
           <div class="action-buttons">
+            <!-- Show rating button if completed and not reviewed -->
             <button v-if="b.status === 'completed' && !b._reviewed" @click="openReview(b)" class="btn btn-outline btn-sm">⭐ Calificar</button>
+            <!-- Show cancel button if pending -->
             <button v-if="b.status === 'pending'" @click="cancelBooking(b.id)" class="btn btn-danger btn-sm">{{ t('common.cancel') }}</button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Review modal -->
+    <!-- Review modal overlay -->
     <div v-if="reviewBooking" class="modal-overlay" @click.self="reviewBooking = null">
       <div class="modal-box">
         <h3 class="card-title">Calificar servicio</h3>
         <p class="muted-text mb-3">{{ reviewBooking.workerName }}</p>
+        <!-- Star rating selector -->
         <div class="rating-container">
           <button v-for="i in 5" :key="i" @click="reviewForm.rating = i" class="rating-btn" :style="{ opacity: i <= reviewForm.rating ? 1 : 0.3 }">⭐</button>
         </div>
+        <!-- Review comment textarea -->
         <textarea v-model="reviewForm.comment" class="input-field mb-4" rows="3" placeholder="Escribe tu reseña..."></textarea>
+        <!-- Modal actions -->
         <div class="modal-actions">
           <button @click="reviewBooking = null" class="btn btn-secondary flex-1">{{ t('common.cancel') }}</button>
           <button @click="submitReview" class="btn btn-primary flex-1" :disabled="!reviewForm.rating">Enviar</button>
@@ -75,18 +87,22 @@ const loading = ref(true);
 const reviewBooking = ref(null);
 const reviewForm = ref({ rating: 0, comment: "" });
 
+// Return CSS class based on booking status
 function statusBadge(s) {
   return { pending:"badge badge-yellow", accepted:"badge badge-blue", completed:"badge badge-green", rejected:"badge badge-red", cancelled:"badge badge-gray" }[s] || "badge badge-gray";
 }
 
+// Open review modal for booking
 function openReview(b) { reviewBooking.value = b; reviewForm.value = { rating: 0, comment: "" }; }
 
+// Cancel a booking
 async function cancelBooking(id) {
   await api.patch(`/bookings/${id}/status`, { status: "cancelled" });
   await load();
   toast.success("Reserva cancelada");
 }
 
+// Submit rating and review
 async function submitReview() {
   await api.post("/reviews", { bookingId: reviewBooking.value.id, workerId: reviewBooking.value.workerId, ...reviewForm.value });
   reviewBooking.value = null;
@@ -94,13 +110,16 @@ async function submitReview() {
   await load();
 }
 
+// Fetch all bookings for current user
 async function load() {
   loading.value = true;
   const { data } = await api.get("/bookings");
+  // Sort by creation date (newest first)
   bookings.value = data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   loading.value = false;
 }
 
+// Load data on component mount
 onMounted(load);
 </script>
 
