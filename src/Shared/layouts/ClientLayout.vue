@@ -18,9 +18,16 @@
               <span v-html="link.icon" class="nav-icon"></span>
               <span class="nav-label">{{ t(link.label) }}</span>
             </router-link>
-            
-            <div class="nav-divider"></div>
-            
+
+
+            <router-link to="/client/notifications" class="nav-item notif-bell" :class="{ 'active': $route.path.startsWith('/client/notifications') }" :title="t('nav.notifications')">
+              <span class="nav-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+              </span>
+              <span v-if="notifStore.unreadCount > 0" class="notif-badge">{{ notifStore.unreadCount > 9 ? '9+' : notifStore.unreadCount }}</span>
+              <span class="nav-label">{{ t('nav.notifications') }}</span>
+            </router-link>
+
             <button @click="handleLogout" class="nav-item nav-logout">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
               <span class="nav-label">{{ t('nav.logout') }}</span>
@@ -42,27 +49,45 @@
 </template>
 
 <script setup>
+import { onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth.js";
 import { useRoute } from "vue-router";
+import { useNotificationsStore } from "../stores/notifications.js";
+import { useAppLogout } from "../composables/useAppLogout.js";
 
 const { t, locale } = useI18n();
 const router = useRouter();
 const auth = useAuthStore();
 const route = useRoute();
+const notifStore = useNotificationsStore();
+const handleLogoutAction = useAppLogout();
+
+async function refreshAll() {
+  notifStore.fetch("client");
+  try { await auth.refreshUser(); } catch { /* JWT expired → handled inside */ }
+}
+
+onMounted(refreshAll);
+
+// Re-fetch user + notifications whenever the client navigates to a different
+// section of the navbar — keeps the bell badge and the user data fresh
+// without forcing the user to press F5.
+watch(() => route.path, refreshAll);
 
 const navLinks = [
   { to: "/client/search", label: "nav.search", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' },
   { to: "/client/bookings", label: "nav.bookings", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>' },
+  { to: "/client/history", label: "nav.history", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 106 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>' },
   { to: "/client/payments", label: "nav.payments", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>' },
   { to: "/client/messages", label: "nav.messages", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2v10z"/></svg>' },
   { to: "/client/profile", label: "nav.profile", icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' }
 ];
 
-function handleLogout() {
-  auth.clearAuth();
-  router.push("/");
+async function handleLogout() {
+  // Limpia JWT propio + cierra sesión Auth0 (returnTo /login).
+  await handleLogoutAction();
 }
 
 function toggleLang() {
@@ -131,16 +156,21 @@ function toggleLang() {
   align-items: center;
   justify-content: center;
   box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+
 }
 
 .brand-text {
   font-weight: 800;
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   color: #0f172a;
   letter-spacing: -0.025em;
   display: none;
+  white-space: nowrap;
 }
-@media (min-width: 830px) {
+@media (min-width: 830px) and (max-width: 1299px) {
+  .brand-text { display: block; }
+}
+@media (min-width: 1500px) {
   .brand-text { display: block; }
 }
 .brand-accent { color: var(--color-primary); }
@@ -149,33 +179,29 @@ function toggleLang() {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex: 1;
-  justify-content: flex-end;
-  overflow-x: auto;
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-  padding: 0.5rem 0.5rem;
-  margin: -0.5rem -0.5rem;
 }
 .nav-menu::-webkit-scrollbar { display: none; }
-@media (min-width: 670px) {
+@media (min-width: 640px) {
   .nav-menu { gap: 0.75rem; }
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.625rem 1rem;
+  gap: 0.35rem;
+  padding: 0.55rem 0.65rem;
   border-radius: 0.75rem;
-  font-size: 0.9375rem;
+  font-size: 0.95rem;
   font-weight: 700;
   color: #475569;
   transition: all 0.3s ease;
   white-space: nowrap;
 }
 @media (min-width: 670px) {
-  .nav-item { padding: 0.75rem 1.25rem; font-size: 1rem; }
+  .nav-item {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.95rem;
+  }
 }
 
 .nav-icon {
@@ -208,17 +234,6 @@ function toggleLang() {
   border: 1px solid rgba(191,219,254,0.5);
 }
 
-.nav-divider {
-  width: 1px;
-  height: 2.5rem;
-  background-color: #e2e8f0;
-  margin: 0 0.5rem;
-  display: none;
-}
-@media (min-width: 670px) {
-  .nav-divider { display: block; }
-}
-
 .nav-logout:hover {
   background-color: #fef2f2;
   color: #dc2626;
@@ -235,6 +250,28 @@ function toggleLang() {
   .lang-btn { padding: 0.75rem 1.25rem; }
 }
 .lang-btn:hover { background-color: white; }
+
+.notif-bell { position: relative; }
+.notif-badge {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.35rem;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background-color: #dc2626;
+  color: white;
+  border-radius: 9999px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+@media (min-width: 1300px) {
+  .notif-badge { top: 0.1rem; right: auto; left: 2rem; }
+}
 
 .main-container {
   flex: 1;

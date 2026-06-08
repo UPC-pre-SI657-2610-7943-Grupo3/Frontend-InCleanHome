@@ -9,12 +9,27 @@
     </div>
 
     <div v-else class="card profile-card">
+      <!-- Banner de cuenta suspendida (visible para la propia trabajadora) -->
+      <div v-if="auth.isSuspended" class="suspension-banner-self">
+        🚫 Tu cuenta está temporalmente suspendida hasta el {{ formatSuspendedUntil(auth.suspendedUntil) }}.
+        <div class="suspension-reason-self">Durante la suspensión no recibirás nuevas solicitudes.</div>
+        <div v-if="auth.suspensionReason" class="suspension-reason-self">{{ auth.suspensionReason }}</div>
+      </div>
       <div class="profile-header">
-        <div class="profile-avatar avatar-purple">
-          <span class="avatar-initial">{{ initials }}</span>
+        <div class="avatar-wrap">
+          <div class="profile-avatar avatar-purple">
+            <img v-if="photoUrl" :src="photoUrl" class="avatar-img" alt="profile" />
+            <span v-else class="avatar-initial">{{ initials }}</span>
+          </div>
+          <button type="button" class="photo-btn" @click="triggerPhoto" :disabled="photoUploading" :title="t('common.edit')">
+            <div v-if="photoUploading" class="spinner spinner-xs"></div>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+          <input ref="photoInput" type="file" accept="image/*" class="hidden-input" @change="onPhotoSelected" />
         </div>
         <h2 class="profile-name">{{ auth.user?.name }}</h2>
         <span class="badge badge-purple">{{ t('auth.worker') }}</span>
+        <div v-if="photoError" class="photo-error">{{ photoError }}</div>
       </div>
 
       <div class="form-group-list">
@@ -67,6 +82,18 @@
            <textarea v-model="form.bio" class="input-field no-resize" rows="4"></textarea>
         </div>
 
+        <!-- Acceso permanente para editar/reemplazar los PDFs de verificación.
+             Visible siempre (no solo cuando el admin rechaza) para que la trabajadora
+             pueda corregir un archivo equivocado al instante. Reusa la vista
+             /upload-documents que ya maneja la lógica de subida. -->
+        <div class="form-group docs-edit-row">
+          <label class="label-bold">{{ t('worker.documents') }}</label>
+          <router-link to="/upload-documents" class="btn btn-outline btn-docs-edit">
+            📄 {{ t('worker.editDocuments') }}
+          </router-link>
+          <p class="docs-edit-hint">{{ t('worker.editDocumentsHint') }}</p>
+        </div>
+
         <div v-if="success" class="alert success-box">✓ Perfil actualizado</div>
         <div v-if="error" class="alert error-box">⚠ {{ error }}</div>
 
@@ -84,6 +111,7 @@ import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../Shared/stores/auth.js";
 import api from "../../Shared/api.js";
+import { formatSuspendedUntil } from "../../Shared/utils/suspension.js";
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -94,6 +122,36 @@ const error = ref("");
 
 const form = ref({ name: "", phone: "", age: 25, experienceYears: 1, hourlyRate: 25, serviceTypes: [], zones: [], bio: "" });
 const initials = computed(() => (auth.user?.name || "W").split(" ").map(n => n[0]).slice(0,2).join("").toUpperCase());
+
+// Foto de perfil — se carga y guarda exclusivamente en el backend.
+const photoInput = ref(null);
+const photoUrl = ref("");
+const photoUploading = ref(false);
+const photoError = ref("");
+
+function triggerPhoto() { photoInput.value?.click(); }
+
+function onPhotoSelected(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { photoError.value = "Solo se aceptan imágenes"; return; }
+  if (file.size > 3 * 1024 * 1024) { photoError.value = "La imagen no puede superar 3 MB"; return; }
+  photoError.value = "";
+  const reader = new FileReader();
+  reader.onload = async () => {
+    // Previsualización inmediata
+    photoUrl.value = reader.result;
+    photoUploading.value = true;
+    try {
+      await api.post("/workers/me/photo", { photoUrl: reader.result });
+    } catch {
+      photoError.value = "No se pudo guardar la foto";
+    } finally {
+      photoUploading.value = false;
+    }
+  };
+  reader.readAsDataURL(file);
+}
 
 const serviceOptions = computed(() => [
   { value: "limpieza_general", label: t("worker.services.limpieza_general") },
@@ -127,6 +185,7 @@ onMounted(async () => {
   try {
     const { data } = await api.get("/workers/me/profile");
     form.value = { name: data.name || "", phone: data.phone || "", age: data.age || 25, experienceYears: data.experienceYears || 1, hourlyRate: data.hourlyRate || 25, serviceTypes: data.serviceTypes || [], zones: data.zones || [], bio: data.bio || "" };
+    if (data.photoUrl) photoUrl.value = data.photoUrl;
   } catch {} finally { loading.value = false; }
 });
 </script>
@@ -178,9 +237,30 @@ onMounted(async () => {
   align-items: center; 
   justify-content: center; 
   margin: 0 auto 1rem;
+  overflow: hidden;
 }
 .avatar-purple { background: #8b5cf6; }
 .avatar-initial { color: white; font-size: 1.75rem; font-weight: 700; }
+.avatar-img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-wrap { position: relative; width: 80px; margin: 0 auto; }
+.photo-btn {
+  position: absolute;
+  bottom: 0.75rem;
+  right: -4px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: white;
+  border: 1px solid #e2e8f0;
+  color: #8b5cf6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+}
+.photo-btn:hover { background: #f8fafc; }
+.hidden-input { display: none; }
 
 .profile-name { font-size: 1.5rem; font-weight: 700; color: #1e293b; margin-bottom: 0.25rem; }
 
@@ -266,6 +346,39 @@ onMounted(async () => {
 .spinner { border: 3px solid rgba(0,0,0,0.08); border-top-color: #2563eb; border-radius:50%; width:28px; height:28px; animation: spin 1s linear infinite; }
 .spinner-lg { width:36px; height:36px; }
 .spinner-sm { width:18px; height:18px; border-width:2px; }
+.spinner-xs { width:12px; height:12px; border-width:2px; }
+
+.photo-error { font-size: 0.75rem; color: #dc2626; margin-top: 0.25rem; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.suspension-banner-self {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  margin-bottom: 1.5rem;
+  font-weight: 600;
+  border-left: 4px solid #dc2626;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+.suspension-reason-self {
+  font-weight: 400;
+  font-size: 0.8125rem;
+  color: #7f1d1d;
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+
+.docs-edit-row { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+.btn-docs-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.docs-edit-hint { font-size: 0.8125rem; color: #64748b; margin: 0.25rem 0 0 0; line-height: 1.4; }
 </style>

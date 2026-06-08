@@ -3,14 +3,22 @@
     <button @click="$router.back()" class="btn btn-secondary btn-sm mb-4">← {{ t('common.back') }}</button>
     <h1 class="page-title mb-6">{{ t('booking.title') }}</h1>
 
+    <!-- Banner: cuenta del cliente suspendida -->
+    <div v-if="auth.isSuspended" class="suspension-banner">
+      🚫 Tu cuenta está temporalmente suspendida y no puedes reservar.
+      <div class="suspension-until">Termina el {{ formatSuspendedUntil(auth.suspendedUntil) }}.</div>
+      <div v-if="auth.suspensionReason" class="suspension-reason">{{ auth.suspensionReason }}</div>
+    </div>
+
     <!-- Show loading spinner while fetching worker data -->
     <div v-if="workerLoading" class="loader-wrapper"><div class="spinner"></div></div>
 
     <div v-else class="flex-col gap-5">
       <!-- Display worker information -->
       <div class="card flex-row gap-4 worker-summary">
-        <div class="worker-avatar-md avatar-blue">
-          <span class="avatar-initial">{{ initials }}</span>
+        <div class="worker-avatar-md avatar-blue" :style="worker?.photoUrl ? 'padding:0;overflow:hidden;' : ''">
+          <img v-if="worker?.photoUrl" :src="worker.photoUrl" alt="foto" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />
+          <span v-else class="avatar-initial">{{ initials }}</span>
         </div>
         <div>
           <div class="worker-name">{{ worker?.name }}</div>
@@ -29,6 +37,12 @@
       <!-- Date and time selection -->
       <div class="card">
         <h3 class="card-subtitle">📅 {{ t('booking.selectDate') }}</h3>
+
+        <!-- Aviso: trabajadora sin disponibilidad configurada -->
+        <div v-if="availability.length === 0 && !loading" class="no-avail-notice">
+          🚫 Trabajador(a) aún no ha configurado su disponibilidad horaria. No es posible realizar una reserva en este momento.
+        </div>
+
         <!-- Calendar picker -->
         <div class="calendar">
           <div class="cal-header">
@@ -41,18 +55,21 @@
           </div>
           <div class="cal-grid">
             <div v-for="blank in startBlank" :key="'b'+blank"></div>
-            <!-- Day buttons -->
+            <!-- Day buttons: disabled when past OR worker not available that weekday -->
             <button v-for="day in daysInMonth" :key="day"
               @click="selectDay(day)"
-              :disabled="isPast(day)"
-              :class="['cal-day', selectedDay === day ? 'cal-day-selected' : '', isPast(day) ? 'cal-day-disabled' : 'cal-day-active']">
+              :disabled="isPast(day) || isUnavailableDay(day)"
+              :title="isUnavailableDay(day) && !isPast(day) ? 'La trabajadora no atiende este día' : ''"
+              :class="['cal-day',
+                        selectedDay === day ? 'cal-day-selected' : '',
+                        (isPast(day) || isUnavailableDay(day)) ? 'cal-day-disabled' : 'cal-day-active']">
               {{ day }}
             </button>
           </div>
         </div>
 
         <!-- Time selection -->
-        <div class="grid-2-cols gap-3 mt-4">
+        <div v-if="selectedDay && timeSlots.length" class="grid-2-cols gap-3 mt-4">
           <div class="form-group">
             <label class="label-bold">{{ t('booking.startTime') }}</label>
             <select v-model="form.startTime" class="input-field" @change="calcHours">
@@ -62,19 +79,36 @@
           <div class="form-group">
             <label class="label-bold">{{ t('booking.endTime') }}</label>
             <select v-model="form.endTime" class="input-field" @change="calcHours">
-              <option v-for="h in timeSlots" :key="h" :value="h">{{ h }}</option>
+              <option v-for="h in endTimeSlots" :key="h" :value="h">{{ h }}</option>
             </select>
           </div>
+        </div>
+        <div v-else-if="selectedDay" class="coverage-warning mt-4">
+          ⚠️ Trabajador(a) no tiene horarios disponibles ese día.
         </div>
 
         <!-- Display hours calculated -->
         <div v-if="form.hours > 0" class="hours-info">{{ form.hours }} {{ t('booking.hours') }}</div>
       </div>
 
-      <!-- Address and notes -->
+      <!-- District, reference, address and notes -->
       <div class="card">
-        <label class="label-bold">{{ t('booking.address') }}</label>
+        <label class="label-bold">{{ t('booking.district') }}</label>
+        <select v-model="form.district" class="input-field mt-1">
+          <option value="" disabled>{{ t('booking.selectDistrict') }}</option>
+          <option v-for="z in districtOptions" :key="z" :value="z">{{ t(`worker.zones.${z}`) }}</option>
+        </select>
+        <!-- Coverage validation message -->
+        <div v-if="form.district && !districtHasCoverage" class="coverage-warning">
+          ⚠️ {{ t('booking.noCoverage') }}
+        </div>
+
+        <label class="label-bold mt-label">{{ t('booking.address') }}</label>
         <input v-model="form.address" type="text" class="input-field mt-1" :placeholder="t('booking.address')" />
+
+        <label class="label-bold mt-label">{{ t('booking.reference') }}</label>
+        <input v-model="form.reference" type="text" class="input-field mt-1" :placeholder="t('booking.referencePlaceholder')" />
+
         <label class="label-bold mt-label">{{ t('booking.notes') }}</label>
         <textarea v-model="form.notes" class="input-field mt-1 no-resize" rows="2"></textarea>
       </div>
@@ -119,12 +153,10 @@
         </div>
       </div>
 
-      <!-- Booking summary -->
-      <div class="card summary-card">
+      <!-- Booking summary — only visible once the client has selected time slots -->
+      <div v-if="form.hours > 0" class="card summary-card">
         <h3 class="card-title mb-4">Resumen</h3>
         <div class="summary-row"><span>{{ form.hours }}h × S/. {{ worker?.hourlyRate }}</span><span>S/. {{ subtotal.toFixed(2) }}</span></div>
-        <div class="summary-row summary-warning"><span>{{ t('booking.platformFee') }}</span><span>- S/. {{ platformFee.toFixed(2) }}</span></div>
-        <div class="summary-row summary-success"><span>{{ t('booking.workerEarning') }}</span><span>S/. {{ workerEarning.toFixed(2) }}</span></div>
         <div class="summary-total">
           <span class="total-label">{{ t('booking.total') }}</span>
           <span class="total-amount">S/. {{ subtotal.toFixed(2) }}</span>
@@ -135,7 +167,8 @@
       <div v-if="error" class="alert error-box">{{ error }}</div>
 
       <!-- Confirm booking button -->
-      <button @click="handleBook" class="btn btn-primary btn-full btn-lg mt-4" :disabled="!canBook || submitting">
+      <button @click="handleBook" class="btn btn-primary btn-full btn-lg mt-4" :disabled="!canBook || submitting"
+        :title="availability.length === 0 ? 'Trabajador(a) no tiene disponibilidad configurada' : ''">
         <div v-if="submitting" class="spinner spinner-sm"></div>
         {{ submitting ? t('common.loading') : t('booking.confirm') }}
       </button>
@@ -144,16 +177,20 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useToastStore } from "../../Shared/stores/toast.js";
 import api from "../../Shared/api.js";
+import { hasCoverage } from "../../Shared/constants/zones.js";
+import { useAuthStore } from "../../Shared/stores/auth.js";
+import { formatSuspendedUntil } from "../../Shared/utils/suspension.js";
 
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const toast = useToastStore();
+const auth = useAuthStore();
 
 const worker = ref(null);
 const workerLoading = ref(true);
@@ -167,15 +204,21 @@ const today = new Date();
 const viewYear = ref(today.getFullYear());
 const viewMonth = ref(today.getMonth());
 const selectedDay = ref(null);
+// Disponibilidad de la trabajadora cargada del backend.
+const availability = ref([]);
 
 // Booking form data
-const form = ref({ serviceType: "", startTime: "08:00", endTime: "10:00", address: "", notes: "", paymentMethodId: null, hours: 2 });
+const form = ref({ serviceType: "", startTime: "08:00", endTime: "10:00", district: "", address: "", reference: "", notes: "", paymentMethodId: null, hours: 0 });
 // New payment method form
 const newPm = ref({ type: "cash", label: "", details: "" });
 
-// Payment types mapping
+// Payment types mapping. NOTA: ni izipay_card ni paypal son tipos de método aquí
+// — son CANALES que se gatillan automáticamente desde ClientBookingsView según
+// el tipo del método elegido ("card" -> Izipay, "paypal_card" -> PayPal). Aquí
+// solo listamos los tipos de método que el cliente puede registrar.
 const paymentTypes = computed(() => ({
   cash: t("booking.paymentTypes.cash"), card: t("booking.paymentTypes.card"),
+  paypal_card: t("booking.paymentTypes.paypal_card"),
   yape: t("booking.paymentTypes.yape"), plin: t("booking.paymentTypes.plin"),
   bank_transfer: t("booking.paymentTypes.bank_transfer"),
 }));
@@ -186,25 +229,107 @@ const initials = computed(() => worker.value?.name?.split(" ").map(n => n[0]).sl
 const subtotal = computed(() => (worker.value?.hourlyRate || 0) * form.value.hours);
 const platformFee = computed(() => subtotal.value * 0.10);
 const workerEarning = computed(() => subtotal.value - platformFee.value);
-// Check if booking can be confirmed
-const canBook = computed(() => selectedDay.value && form.value.serviceType && form.value.address && form.value.paymentMethodId && form.value.hours > 0);
+
+// Los distritos ofrecidos son las zonas donde la trabajadora atiende; así la
+// cobertura se valida contra la zona de servicio real de la trabajadora.
+const districtOptions = computed(() => worker.value?.zones || []);
+// Hay cobertura si el distrito está dentro tanto del catálogo global como de
+// las zonas de la trabajadora.
+const districtHasCoverage = computed(
+  () => !!form.value.district && hasCoverage(form.value.district) && districtOptions.value.includes(form.value.district)
+);
+
+// Check if booking can be confirmed (incluye cobertura válida del distrito y
+// que la cuenta del cliente no esté suspendida).
+const canBook = computed(() =>
+  !auth.isSuspended &&
+  availability.value.length > 0 &&
+  selectedDay.value && form.value.serviceType && form.value.district && districtHasCoverage.value &&
+  form.value.address && form.value.paymentMethodId && form.value.hours > 0
+);
 
 // Calendar utilities
 const monthLabel = computed(() => new Date(viewYear.value, viewMonth.value).toLocaleDateString("es-PE", { month:"long", year:"numeric" }));
 const daysInMonth = computed(() => new Date(viewYear.value, viewMonth.value + 1, 0).getDate());
 const startBlank = computed(() => new Date(viewYear.value, viewMonth.value, 1).getDay());
-// Generate time slots from 6:00 to 23:00
-const timeSlots = Array.from({ length: 18 }, (_, i) => `${String(Math.floor(i + 6)).padStart(2,"0")}:00`);
+// Día de semana del día seleccionado (0=Dom...6=Sáb), o null si no hay selección.
+const selectedDow = computed(() =>
+  selectedDay.value ? new Date(viewYear.value, viewMonth.value, selectedDay.value).getDay() : null
+);
+// Franjas disponibles para el día seleccionado (uniendo slots solapados/adyacentes
+// para tener un rango efectivo de horas disponibles).
+const daySlots = computed(() => {
+  if (selectedDow.value === null) return [];
+  return availability.value.filter(s => s.dayOfWeek === selectedDow.value);
+});
+// Genera las horas (HH:00) disponibles según los slots del día. Si la trabajadora
+// no atiende ese día (no hay slots), devuelve una lista vacía y se bloquea reservar.
+// Si el día seleccionado es hoy, filtra las horas que ya pasaron.
+const timeSlots = computed(() => {
+  if (!daySlots.value.length) return [];
+  // Construye un set de horas cubiertas por al menos un slot.
+  const covered = new Set();
+  for (const s of daySlots.value) {
+    const [sh] = s.startTime.split(":").map(Number);
+    const [eh] = s.endTime.split(":").map(Number);
+    for (let h = sh; h < eh; h++) covered.add(h);
+  }
+  // Si el día seleccionado es hoy, filtrar horas pasadas.
+  const isToday = selectedDay.value &&
+    viewYear.value === today.getFullYear() &&
+    viewMonth.value === today.getMonth() &&
+    selectedDay.value === today.getDate();
+  const nowHour = today.getHours();
+  // Devuelve horas como "HH:00" en orden ascendente.
+  return Array.from(covered)
+    .filter(h => !isToday || h > nowHour)
+    .sort((a, b) => a - b)
+    .map(h => `${String(h).padStart(2,"0")}:00`);
+});
+// Horas válidas para "fin": una hora más que la última cubierta.
+const endTimeSlots = computed(() => {
+  if (!daySlots.value.length) return [];
+  const all = new Set();
+  for (const s of daySlots.value) {
+    const [sh] = s.startTime.split(":").map(Number);
+    const [eh] = s.endTime.split(":").map(Number);
+    for (let h = sh + 1; h <= eh; h++) all.add(h);
+  }
+  return Array.from(all).sort((a, b) => a - b).map(h => `${String(h).padStart(2,"0")}:00`);
+});
 
 // Navigation functions
 function prevMonth() { if (viewMonth.value === 0) { viewMonth.value = 11; viewYear.value--; } else viewMonth.value--; }
 function nextMonth() { if (viewMonth.value === 11) { viewMonth.value = 0; viewYear.value++; } else viewMonth.value++; }
-function selectDay(d) { selectedDay.value = d; }
+function selectDay(d) {
+  if (isPast(d) || isUnavailableDay(d)) return;
+  selectedDay.value = d;
+}
 // Check if date is in the past
 function isPast(d) {
   const date = new Date(viewYear.value, viewMonth.value, d);
   return date < new Date(today.getFullYear(), today.getMonth(), today.getDate());
 }
+// True cuando la trabajadora no tiene ningún slot disponible ese día de semana.
+function isUnavailableDay(d) {
+  const dow = new Date(viewYear.value, viewMonth.value, d).getDay();
+  return !availability.value.some(s => s.dayOfWeek === dow);
+}
+
+// Cuando cambia el día seleccionado, asegura que startTime/endTime estén dentro
+// de las franjas disponibles. Si no, las ajusta a la primera opción válida.
+watch(selectedDay, () => {
+  if (!selectedDay.value || !timeSlots.value.length) return;
+  if (!timeSlots.value.includes(form.value.startTime)) {
+    form.value.startTime = timeSlots.value[0];
+  }
+  // El fin debe ser > inicio y dentro de endTimeSlots.
+  const valid = endTimeSlots.value.filter(h => h > form.value.startTime);
+  if (!valid.includes(form.value.endTime)) {
+    form.value.endTime = valid[0] || endTimeSlots.value[endTimeSlots.value.length - 1];
+  }
+  calcHours();
+});
 // Calculate hours between start and end time
 function calcHours() {
   const [sh, sm] = form.value.startTime.split(":").map(Number);
@@ -213,7 +338,7 @@ function calcHours() {
 }
 // Get payment method icon
 function paymentIcon(type) {
-  return { cash:"💵", card:"💳", yape:"📱", plin:"📲", bank_transfer:"🏦" }[type] || "💰";
+  return { cash:"💵", card:"💳", paypal_card:"🅿️", yape:"📱", plin:"📲", bank_transfer:"🏦" }[type] || "💰";
 }
 
 // Add new payment method
@@ -231,6 +356,16 @@ async function handleBook() {
   error.value = "";
   try {
     const dateStr = `${viewYear.value}-${String(viewMonth.value+1).padStart(2,"0")}-${String(selectedDay.value).padStart(2,"0")}`;
+    // El backend espera un único campo Address. Componemos distrito + dirección
+    // + referencia para preservar el contrato actual sin perder la información
+    // estructurada. Cuando el backend agregue campos District/Reference, se
+    // pueden enviar por separado.
+    const districtLabel = t(`worker.zones.${form.value.district}`);
+    const fullAddress = [
+      `${districtLabel}`,
+      form.value.address,
+      form.value.reference ? `(Ref: ${form.value.reference})` : "",
+    ].filter(Boolean).join(", ");
     await api.post("/bookings", {
       workerId: parseInt(route.params.id),
       serviceType: form.value.serviceType,
@@ -239,9 +374,14 @@ async function handleBook() {
       endTime: form.value.endTime,
       hours: form.value.hours,
       paymentMethodId: form.value.paymentMethodId,
-      address: form.value.address,
+      address: fullAddress,
       notes: form.value.notes,
     });
+
+    // El pago se realiza DESPUÉS, cuando la trabajadora complete el servicio.
+    // Desde /client/bookings el cliente verá "Pagar Servicio" — si su método
+    // elegido era de tipo "card" se abrirá Izipay sandbox; en otro caso, modal
+    // manual de confirmación.
     toast.success(t("booking.bookingSuccess"));
     router.push("/client/bookings");
   } catch (e) {
@@ -255,6 +395,11 @@ onMounted(async () => {
   const [w, pm] = await Promise.all([api.get(`/workers/${id}`), api.get("/payments/methods")]);
   worker.value = w.data;
   paymentMethods.value = pm.data;
+  // Carga la disponibilidad para filtrar días y franjas horarias.
+  try {
+    const av = await api.get(`/workers/${id}/availability`);
+    availability.value = (av.data || []).filter(s => s.isAvailable);
+  } catch { availability.value = []; }
   if (w.data.serviceTypes?.length) form.value.serviceType = w.data.serviceTypes[0];
   workerLoading.value = false;
 });
@@ -329,6 +474,8 @@ onMounted(async () => {
 .cal-day-selected { background: #2563eb !important; color: white !important; }
 .cal-day-disabled { color: #cbd5e1; cursor: not-allowed; }
 
+.no-avail-notice { background: #fee2e2; color: #991b1b; padding: 0.875rem 1rem; border-radius: 0.625rem; margin-bottom: 1rem; font-size: 0.875rem; font-weight: 500; border-left: 4px solid #dc2626; }
+
 .grid-2-cols {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -367,9 +514,32 @@ onMounted(async () => {
 
 .alert { padding: 0.75rem; border-radius: 0.5rem; font-size: 0.875rem; margin-top: 1rem; }
 .error-box { background: #fee2e2; color: #991b1b; }
+.coverage-warning { margin-top: 0.5rem; padding: 0.625rem 0.75rem; background: #fef3c7; color: #92400e; border-radius: 0.5rem; font-size: 0.8125rem; line-height: 1.3; }
 
 .spinner { border: 3px solid rgba(0,0,0,0.08); border-top-color: #2563eb; border-radius: 50%; width: 28px; height: 28px; animation: spin 1s linear infinite; }
 .spinner-sm { width: 18px; height: 18px; border-width: 2px; display: inline-block; margin-right: 0.5rem; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.suspension-banner {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  margin-bottom: 1.25rem;
+  font-weight: 600;
+  border-left: 4px solid #dc2626;
+}
+.suspension-until {
+  font-weight: 500;
+  font-size: 0.875rem;
+  margin-top: 0.25rem;
+}
+.suspension-reason {
+  font-weight: 400;
+  font-size: 0.8125rem;
+  color: #7f1d1d;
+  margin-top: 0.25rem;
+  font-style: italic;
+}
 </style>

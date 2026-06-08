@@ -115,6 +115,7 @@ const form = ref({ type: "yape", label: "", details: "", isDefault: false });
 const paymentTypes = computed(() => ({
   cash: t("booking.paymentTypes.cash"),
   card: t("booking.paymentTypes.card"),
+  paypal_card: t("booking.paymentTypes.paypal_card"),
   yape: t("booking.paymentTypes.yape"),
   plin: t("booking.paymentTypes.plin"),
   bank_transfer: t("booking.paymentTypes.bank_transfer"),
@@ -123,7 +124,7 @@ const paymentTypes = computed(() => ({
 
 function paymentIcon(type) {
 // Function to get payment icon
-  return { cash: "💵", card: "💳", yape: "📱", plin: "📲", bank_transfer: "🏦" }[type] || "💰";
+  return { cash: "💵", card: "💳", paypal_card: "🅿️", yape: "📱", plin: "📲", bank_transfer: "🏦" }[type] || "💰";
 }
 
 async function addMethod() {

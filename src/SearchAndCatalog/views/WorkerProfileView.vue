@@ -1,7 +1,7 @@
 <template>
   <div class="view-container max-w-4xl">
     <div v-if="loading" class="loader-wrapper"><div class="spinner spinner-lg"></div></div>
-    <div v-else-if="!worker" class="empty-state py-16"><p class="muted-text">Trabajadora no encontrada</p></div>
+    <div v-else-if="!worker" class="empty-state py-16"><p class="muted-text">Trabajador(a) no encontrada</p></div>
     <div v-else>
       <button @click="$router.back()" class="btn btn-secondary btn-sm mb-4">← {{ t('common.back') }}</button>
 
@@ -9,8 +9,9 @@
         <!-- Left: Profile card -->
         <div class="profile-sidebar">
           <div class="card text-center">
-            <div class="worker-avatar-lg mx-auto mb-4" :style="{ background: avatarBg }">
-              <span class="avatar-initials-lg">{{ initials }}</span>
+            <div class="worker-avatar-lg mx-auto mb-4" :style="worker.photoUrl ? {} : { background: avatarBg }">
+              <img v-if="worker.photoUrl" :src="worker.photoUrl" class="avatar-img-lg" alt="profile" />
+              <span v-else class="avatar-initials-lg">{{ initials }}</span>
             </div>
             <h1 class="profile-name">{{ worker.name }}</h1>
 
@@ -25,12 +26,25 @@
               {{ t('profile.verified') }}
             </div>
 
+            <div v-if="worker.hasConfirmedReports" class="confirmed-report-alert">
+              ⚠ Perfil con {{ worker.confirmedReportsCount }} reporte(s) confirmado(s) por administración.
+            </div>
+
              <div class="worker-rate">S/. {{ worker.hourlyRate }}</div>
              <div class="per-hour">{{ t('search.perHour') }}</div>
 
             <div class="profile-actions mt-4">
-              <router-link :to="`/client/worker/${worker.id}/book`" class="btn btn-primary btn-full">📅 {{ t('profile.book') }}</router-link>
-              <router-link :to="`/client/messages/${worker.id}`" class="btn btn-secondary btn-full">💬 {{ t('profile.contact') }}</router-link>
+              <!-- Banner de cuenta suspendida (si la trabajadora tiene suspensión vigente). -->
+              <div v-if="workerSuspended" class="suspended-banner">
+                🚫 Cuenta suspendida hasta {{ formatSuspendedUntil(worker.suspendedUntil) }}
+              </div>
+              <router-link v-if="!workerSuspended" :to="`/client/worker/${worker.id}/book`" class="btn btn-primary btn-full">📅 {{ t('profile.book') }}</router-link>
+              <button v-else class="btn btn-disabled btn-full" disabled>📅 {{ t('profile.book') }}</button>
+
+              <router-link v-if="!workerSuspended" :to="{ path: `/client/messages/${worker.id}`, query: { name: worker.name } }" class="btn btn-secondary btn-full">💬 {{ t('profile.contact') }}</router-link>
+              <button v-else class="btn btn-disabled btn-full" disabled>💬 {{ t('profile.contact') }}</button>
+
+              <button @click="showReport = true" class="btn btn-ghost btn-full report-link">⚐ {{ t('report.reportWorker') }}</button>
             </div>
 
             <div class="profile-info-section">
@@ -101,6 +115,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Report modal -->
+    <ReportModal v-if="showReport && worker" :target-user-id="worker.id" target-role="worker" :target-name="worker.name" @close="showReport = false" />
   </div>
 </template>
 
@@ -109,6 +126,8 @@ import { ref, computed, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import api from "../../Shared/api.js";
+import ReportModal from "../../Shared/components/ReportModal.vue";
+import { isActiveSuspension, formatSuspendedUntil } from "../../Shared/utils/suspension.js";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -116,6 +135,9 @@ const worker = ref(null);
 const availability = ref([]);
 const reviews = ref([]);
 const loading = ref(true);
+const showReport = ref(false);
+
+const workerSuspended = computed(() => isActiveSuspension(worker.value?.suspendedUntil));
 
 const days = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const colors = ["#2563eb","#8b5cf6","#06b6d4","#10b981","#f59e0b","#ef4444"];
@@ -159,8 +181,9 @@ onMounted(async () => {
 .mt-4 { margin-top: 1rem; }
 .mb-1 { margin-bottom: 0.25rem; }
 
-.worker-avatar-lg { width:88px;height:88px;border-radius:50%;display:flex;align-items:center;justify-content:center; }
+.worker-avatar-lg { width:88px;height:88px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden; }
 .avatar-initials-lg { font-size:2rem;font-weight:700;color:white; }
+.avatar-img-lg { width:100%; height:100%; object-fit:cover; border-radius:50%; }
 .profile-name { font-size:1.375rem;font-weight:800;color:#1e293b; margin:0; }
 
 .rating-display { display: flex; align-items: center; justify-content: center; gap: 0.25rem; }
@@ -168,6 +191,8 @@ onMounted(async () => {
 .rating-count { font-size:0.8125rem; color:#94a3b8; }
 
 .verified-badge { display:inline-flex; align-items:center; gap:0.25rem; margin-top:0.5rem; background:#d1fae5; color:#065f46; padding:0.3rem 0.75rem; border-radius:9999px; font-size:0.8125rem; font-weight:500; }
+
+.confirmed-report-alert { margin-top: .75rem; background:#fef3c7; color:#92400e; padding:.65rem; border-radius:.75rem; font-size:.82rem; font-weight:700; line-height:1.3; }
 
 .worker-rate { font-size:1.5rem; font-weight:800; color:#2563eb; margin-top:1rem; }
 .per-hour { font-size:0.8125rem; color:#64748b; }
@@ -203,5 +228,22 @@ onMounted(async () => {
   .worker-avatar-lg { width:72px; height:72px; }
   .avatar-initials-lg { font-size:1.5rem; }
   .worker-rate { font-size:1.25rem; }
+}
+.suspended-banner {
+  padding: 0.75rem;
+  background: #fee2e2;
+  color: #991b1b;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 0.5rem;
+  line-height: 1.3;
+}
+.btn-disabled {
+  background: #e2e8f0 !important;
+  color: #94a3b8 !important;
+  cursor: not-allowed;
+  border: none;
 }
 </style>

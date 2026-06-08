@@ -6,6 +6,13 @@
       <p class="page-subtitle">{{ t('search.subtitle') }}</p>
     </div>
 
+    <!-- Banner: cuenta suspendida -->
+    <div v-if="auth.isSuspended" class="suspension-banner">
+      🚫 <strong>Cuenta suspendida</strong> — Tu cuenta está temporalmente suspendida y no puedes hacer reservas.
+      <div v-if="auth.suspendedUntil" class="suspension-until">Hasta: {{ formatSuspendedUntil(auth.suspendedUntil) }}</div>
+      <div v-if="auth.suspensionReason" class="suspension-reason">Motivo: {{ auth.suspensionReason }}</div>
+    </div>
+
     <div class="search-layout">
       <!-- Filters sidebar -->
       <div class="filters-sidebar">
@@ -60,6 +67,13 @@
                 <option value="3">3+</option>
               </select>
             </div>
+            <div class="form-group">
+              <label class="label">{{ t('search.availableOn') }}</label>
+              <select v-model.number="filters.availableDay" class="input-field" @change="applyAvailabilityFilter">
+                <option value="">{{ t('search.anyDay') }}</option>
+                <option v-for="d in dayOptions" :key="d.value" :value="d.value">{{ d.label }}</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
@@ -82,20 +96,29 @@
         </div>
 
         <div class="results-header">
-          <p class="results-meta"><span class="results-count">{{ workers.length }}</span> {{ t('search.results') }}</p>
+          <p class="results-meta"><span class="results-count">{{ displayedWorkers.length }}</span> {{ t('search.results') }}</p>
+          <div class="sort-control">
+            <label class="sort-label">{{ t('search.sortBy') }}:</label>
+            <select v-model="sortBy" class="input-field sort-select">
+              <option value="relevance">{{ t('search.sortRelevance') }}</option>
+              <option value="priceAsc">{{ t('search.sortPriceAsc') }}</option>
+              <option value="priceDesc">{{ t('search.sortPriceDesc') }}</option>
+              <option value="ratingDesc">{{ t('search.sortRatingDesc') }}</option>
+            </select>
+          </div>
         </div>
 
         <div v-if="loading" class="loader-wrapper">
           <div class="spinner spinner-lg"></div>
         </div>
 
-        <div v-else-if="workers.length === 0" class="empty-state">
+        <div v-else-if="displayedWorkers.length === 0" class="empty-state">
           <div class="empty-illustration">🔍</div>
           <p class="empty-text">{{ t('search.noResults') }}</p>
         </div>
 
         <div v-else class="results-grid">
-          <WorkerCard v-for="worker in workers" :key="worker.id" :worker="worker" />
+          <WorkerCard v-for="worker in displayedWorkers" :key="worker.id" :worker="worker" />
         </div>
       </div>
     </div>
@@ -107,12 +130,29 @@ import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import api from "../../Shared/api.js";
 import WorkerCard from "../components/WorkerCard.vue";
+import { useAuthStore } from "../../Shared/stores/auth.js";
+import { formatSuspendedUntil } from "../../Shared/utils/suspension.js";
 
 const { t } = useI18n();
+const auth = useAuthStore();
 const workers = ref([]);
 const loading = ref(true);
 const showFilters = ref(false);
-const filters = ref({ serviceType: "", zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "" });
+const sortBy = ref("relevance");
+// availableDay: índice de día (0=Dom ... 6=Sáb) o "" para cualquiera.
+const filters = ref({ serviceType: "", zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "", availableDay: "" });
+// IDs de trabajadoras disponibles el día filtrado (se llena al aplicar el filtro).
+const availableWorkerIds = ref(null);
+
+const dayOptions = computed(() => [
+  { value: 1, label: t("search.anyDay") === "Any day" ? "Monday" : "Lunes" },
+  { value: 2, label: t("search.anyDay") === "Any day" ? "Tuesday" : "Martes" },
+  { value: 3, label: t("search.anyDay") === "Any day" ? "Wednesday" : "Miércoles" },
+  { value: 4, label: t("search.anyDay") === "Any day" ? "Thursday" : "Jueves" },
+  { value: 5, label: t("search.anyDay") === "Any day" ? "Friday" : "Viernes" },
+  { value: 6, label: t("search.anyDay") === "Any day" ? "Saturday" : "Sábado" },
+  { value: 0, label: t("search.anyDay") === "Any day" ? "Sunday" : "Domingo" },
+]);
 
 const serviceOptions = computed(() => [
   { value: "limpieza_general", label: t("worker.services.limpieza_general") },
@@ -133,15 +173,58 @@ async function doSearch() {
   loading.value = true;
   try {
     const params = {};
-    Object.entries(filters.value).forEach(([k, v]) => { if (v !== "" && v !== null) params[k] = v; });
+    Object.entries(filters.value).forEach(([k, v]) => {
+      // availableDay no es un parámetro del backend; se aplica en cliente.
+      if (k === "availableDay") return;
+      if (v !== "" && v !== null) params[k] = v;
+    });
     const { data } = await api.get("/workers", { params });
     workers.value = data;
+    // Re-aplica el filtro de disponibilidad si estaba activo.
+    if (filters.value.availableDay !== "") await applyAvailabilityFilter();
   } catch { workers.value = []; }
   finally { loading.value = false; }
 }
 
+// Filtra por disponibilidad consultando GET /workers/{id}/availability y
+// quedándose con quienes tienen un slot disponible en el día seleccionado.
+async function applyAvailabilityFilter() {
+  if (filters.value.availableDay === "") {
+    availableWorkerIds.value = null;
+    return;
+  }
+  const day = filters.value.availableDay;
+  const checks = await Promise.all(
+    workers.value.map(async (w) => {
+      try {
+        const { data } = await api.get(`/workers/${w.id}/availability`);
+        const ok = (data || []).some((s) => s.dayOfWeek === day && s.isAvailable);
+        return ok ? w.id : null;
+      } catch { return null; }
+    })
+  );
+  availableWorkerIds.value = new Set(checks.filter((x) => x !== null));
+}
+
+// Lista final mostrada: aplica filtro de disponibilidad (cliente) y orden.
+const displayedWorkers = computed(() => {
+  let list = workers.value;
+  if (availableWorkerIds.value) {
+    list = list.filter((w) => availableWorkerIds.value.has(w.id));
+  }
+  const arr = [...list];
+  switch (sortBy.value) {
+    case "priceAsc": arr.sort((a, b) => (a.hourlyRate || 0) - (b.hourlyRate || 0)); break;
+    case "priceDesc": arr.sort((a, b) => (b.hourlyRate || 0) - (a.hourlyRate || 0)); break;
+    case "ratingDesc": arr.sort((a, b) => (b.averageRating || 0) - (a.averageRating || 0)); break;
+  }
+  return arr;
+});
+
 function clearFilters() {
-  filters.value = { serviceType: "", zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "" };
+  filters.value = { serviceType: "", zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "", availableDay: "" };
+  availableWorkerIds.value = null;
+  sortBy.value = "relevance";
   doSearch();
 }
 
@@ -250,6 +333,9 @@ onMounted(doSearch);
 
 .results-meta { font-size: 0.9375rem; color: #64748b; }
 .results-count { font-weight: 600; color: #1e293b; margin-right: 0.25rem; }
+.sort-control { display: flex; align-items: center; gap: 0.5rem; }
+.sort-label { font-size: 0.8125rem; color: #64748b; white-space: nowrap; }
+.sort-select { padding: 0.4rem 0.6rem; font-size: 0.8125rem; width: auto; min-width: 150px; }
 
 .loader-wrapper {
   display: flex;
@@ -276,4 +362,8 @@ onMounted(doSearch);
 .spinner { border: 3px solid rgba(0,0,0,0.08); border-top-color: #2563eb; border-radius:50%; width:28px; height:28px; animation: spin 1s linear infinite; }
 .spinner-lg { width:36px; height:36px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.suspension-banner { background: #fee2e2; color: #991b1b; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #dc2626; }
+.suspension-until { font-weight: 500; font-size: 0.875rem; margin-top: 0.25rem; }
+.suspension-reason { font-weight: 400; font-size: 0.8125rem; color: #7f1d1d; margin-top: 0.25rem; font-style: italic; }
 </style>

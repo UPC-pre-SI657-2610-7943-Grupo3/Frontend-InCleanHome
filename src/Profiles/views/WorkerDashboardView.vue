@@ -3,8 +3,31 @@
     <div class="dashboard-header mb-6">
       <div>
         <h1 class="page-title">{{ t('dashboard.title') }}</h1>
-        <p class="page-subtitle">Hola, {{ auth.user?.name?.split(' ')[0] }} 👋</p>
+        <p class="page-subtitle">{{ t('search.greeting') }} {{ auth.user?.name?.split(' ')[0] }} 👋</p>
       </div>
+    </div>
+
+    <!-- Banner: cuenta en revisión (pendiente de aprobación admin) -->
+    <div v-if="auth.isPendingApproval" class="pending-banner">
+      ⏳ <strong>Cuenta en revisión</strong> — Tu perfil aún no ha sido aprobado por el administrador. No aparecerás en búsquedas ni podrás recibir reservas hasta que seas aprobada.
+    </div>
+
+    <!-- Banner: cuenta suspendida -->
+    <div v-if="auth.isSuspended" class="suspension-banner">
+      🚫 <strong>Cuenta suspendida</strong> — Tu cuenta está temporalmente suspendida.
+      <div v-if="auth.suspendedUntil" class="suspension-until">Hasta: {{ formatSuspendedUntil(auth.suspendedUntil) }}</div>
+      <div v-if="auth.suspensionReason" class="suspension-reason">Motivo: {{ auth.suspensionReason }}</div>
+    </div>
+
+    <!-- Banner: cuenta reportada -->
+    <div v-if="hasReport" class="report-banner">
+      ⚠️ <strong>Cuenta reportada</strong> — Tu cuenta ha recibido un reporte. El equipo de administración lo revisará.
+    </div>
+
+    <!-- Banner: sin disponibilidad configurada -->
+    <div v-if="!loading && !hasAvailability" class="availability-banner">
+      📅 <strong>Configura tu disponibilidad</strong> — Aún no tienes horarios configurados. Los clientes no podrán reservar tus servicios hasta que configures tu disponibilidad en la sección
+      <router-link to="/worker/availability" class="avail-link">Disponibilidad</router-link>.
     </div>
 
     <div v-if="loading" class="loader-wrapper"><div class="spinner spinner-lg"></div></div>
@@ -14,17 +37,17 @@
       <div class="stats-grid mb-6">
         <div class="card stat-card">
           <div class="stat-icon stat-blue">💰</div>
-          <div class="stat-value">S/. {{ stats.netEarnings?.toFixed(0) || '0' }}</div>
+          <div class="stat-value">S/. {{ adjustedNetEarnings.toFixed(2) }}</div>
           <div class="stat-label">{{ t('dashboard.netEarnings') }}</div>
         </div>
         <div class="card stat-card">
           <div class="stat-icon stat-red">📊</div>
-          <div class="stat-value">S/. {{ stats.platformFeeDeducted?.toFixed(0) || '0' }}</div>
+          <div class="stat-value">S/. {{ adjustedPlatformFee.toFixed(2) }}</div>
           <div class="stat-label">{{ t('dashboard.platformFee') }}</div>
         </div>
         <div class="card stat-card">
           <div class="stat-icon stat-green">✅</div>
-          <div class="stat-value">{{ stats.completedServices || 0 }}</div>
+          <div class="stat-value">{{ adjustedCompletedServices }}</div>
           <div class="stat-label">{{ t('dashboard.completedServices') }}</div>
         </div>
         <div class="card stat-card">
@@ -38,14 +61,14 @@
         <!-- Monthly earnings chart -->
         <div class="card">
           <h3 class="section-title">{{ t('dashboard.monthlyEarnings') }}</h3>
-          <div v-if="!stats.monthlyEarnings?.length" class="empty-msg">Sin datos aún</div>
+          <div v-if="!adjustedMonthlyEarnings.length" class="empty-msg">Sin datos aún</div>
           <div v-else class="chart">
-            <div v-for="m in stats.monthlyEarnings.slice(-6)" :key="m.month" class="chart-bar-wrap">
+            <div v-for="m in adjustedMonthlyEarnings.slice(-6)" :key="m.month" class="chart-bar-wrap">
               <div class="chart-bar-outer">
                 <div class="chart-bar" :style="{ height: (m.earnings / maxEarning * 100) + '%', background: '#2563eb' }"></div>
               </div>
               <span class="chart-label">{{ m.month.slice(5) }}</span>
-              <span class="chart-val">S/. {{ m.earnings.toFixed(0) }}</span>
+              <span class="chart-val">S/. {{ m.earnings.toFixed(2) }}</span>
             </div>
           </div>
         </div>
@@ -73,30 +96,126 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../Shared/stores/auth.js";
+import { useRoute } from "vue-router";
 import api from "../../Shared/api.js";
+import { formatSuspendedUntil } from "../../Shared/utils/suspension.js";
+import { getMyWorkerBalance } from "../../Shared/services/paymentApi.js";
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const route = useRoute();
 const stats = ref({});
 const bookings = ref([]);
 const loading = ref(true);
+const hasReport = ref(false);
+const hasAvailability = ref(true);
 
-const maxEarning = computed(() => Math.max(...(stats.value.monthlyEarnings || []).map(m => m.earnings), 1));
+// Balance del backend (reemplaza la lógica adjusted* basada en localStorage).
+const balance = ref({
+  totalEarnings: 0,
+  platformFeeTotal: 0,
+  netEarnings: 0,
+  pendingPayout: 0,
+  pendingPayoutCount: 0,
+  completedServices: 0,
+});
+
+async function checkAvailability() {
+  try {
+    const userId = auth.user?.id;
+    if (!userId) { hasAvailability.value = false; return; }
+    const { data } = await api.get(`/workers/${userId}/availability`);
+    hasAvailability.value = Array.isArray(data) && data.some(s => s.isAvailable);
+  } catch { hasAvailability.value = false; }
+}
+
+watch(() => route.path, (path) => {
+  if (path === "/worker/dashboard") checkAvailability();
+});
+
+if (typeof window !== "undefined") {
+  window.addEventListener("inclean-availability-saved", checkAvailability);
+}
+
+// ── Computeds que ahora leen del balance del backend ─────────────────────
+// netEarnings: ganancias acumuladas del worker (después de comisión, todos los canales).
+// platformFee: comisión total cobrada por la plataforma (10% de los no-cash).
+// completedServices: cantidad de servicios pagados.
+//
+// Estas 3 reflejan lo que YA fue cobrado por el cliente. Los servicios completados
+// pero aún no pagados NO suman acá — solo aparecen como "Reservas recientes" abajo.
+const adjustedNetEarnings = computed(() => balance.value.netEarnings || 0);
+const adjustedPlatformFee = computed(() => balance.value.platformFeeTotal || 0);
+const adjustedCompletedServices = computed(() => balance.value.completedServices || 0);
+
+// monthlyEarnings sigue viniendo de /workers/me/stats; queda como está.
+// (Sería más correcto recalcular del backend, pero es solo el gráfico — no afecta lógica.)
+const adjustedMonthlyEarnings = computed(() => stats.value.monthlyEarnings || []);
+
+const maxEarning = computed(() => Math.max(...adjustedMonthlyEarnings.value.map(m => m.earnings), 1));
 
 function statusBadge(s) {
   const map = { pending:'badge badge-yellow', accepted:'badge badge-blue', completed:'badge badge-green', rejected:'badge badge-red', cancelled:'badge badge-gray' };
   return map[s] || 'badge badge-gray';
 }
 
-onMounted(async () => {
+// Carga inicial + refrescos posteriores. showSpinner=true solo en la carga inicial;
+// los refrescos silenciosos no parpadean la UI.
+async function refreshAll(showSpinner = false) {
   try {
-    const [s, b] = await Promise.all([api.get("/workers/me/stats"), api.get("/bookings")]);
+    const [s, b, bal] = await Promise.all([
+      api.get("/workers/me/stats"),
+      api.get("/bookings"),
+      getMyWorkerBalance().catch(() => null),
+    ]);
     stats.value = s.data;
     bookings.value = b.data;
-  } catch { } finally { loading.value = false; }
+    if (bal) balance.value = bal;
+    try {
+      const { data } = await api.get("/reports/my");
+      hasReport.value = data && data.some(r => r.status === "open" || r.status === "confirmed");
+    } catch { hasReport.value = false; }
+    // Sync user payload (rating del worker, suspensión, documentsRejected, etc.).
+    try { await auth.refreshUser(); } catch { /* no-op */ }
+    // Verificar si tiene disponibilidad configurada
+    await checkAvailability();
+  } catch { /* silencioso para no romper polling */ } finally {
+    if (showSpinner) loading.value = false;
+  }
+}
+
+// Polling silencioso cada 15s. Cubre el caso en que un cliente deja una review,
+// completa un pago, o el admin cambia algo desde otra cuenta — la trabajadora ve
+// los cambios reflejados sin recargar ni cambiar de ruta. Se pausa cuando la
+// pestaña no está visible.
+let pollHandle = null;
+function startPolling() {
+  if (pollHandle) return;
+  pollHandle = setInterval(() => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    refreshAll(false);
+  }, 15000);
+}
+function stopPolling() {
+  if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+}
+function onVisibilityChange() {
+  if (typeof document === "undefined") return;
+  if (!document.hidden) refreshAll(false);
+}
+
+onMounted(() => {
+  refreshAll(true);
+  startPolling();
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibilityChange);
+});
+
+onUnmounted(() => {
+  stopPolling();
+  if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibilityChange);
 });
 </script>
 
@@ -154,6 +273,14 @@ onMounted(async () => {
 
 .spinner { border: 3px solid rgba(0,0,0,0.08); border-top-color: #2563eb; border-radius: 50%; width: 28px; height: 28px; animation: spin 1s linear infinite; }
 .spinner-lg { width: 36px; height: 36px; }
+
+.suspension-banner { background: #fee2e2; color: #991b1b; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #dc2626; }
+.suspension-until { font-weight: 500; font-size: 0.875rem; margin-top: 0.25rem; }
+.suspension-reason { font-weight: 400; font-size: 0.8125rem; color: #7f1d1d; margin-top: 0.25rem; font-style: italic; }
+.report-banner { background: #fef3c7; color: #92400e; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #f59e0b; }
+.pending-banner { background: #ede9fe; color: #5b21b6; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #7c3aed; line-height: 1.5; }
+.availability-banner { background: #e0f2fe; color: #075985; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #0284c7; line-height: 1.5; }
+.avail-link { color: #0284c7; text-decoration: underline; font-weight: 700; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>

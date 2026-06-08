@@ -66,8 +66,8 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             <span class="info-text">{{ t('auth.verificationPending') }}</span>
           </div>
-          <button @click="goToLogin" class="btn btn-primary btn-full btn-lg">
-            {{ t('auth.login') }} →
+          <button @click="goToDashboard" class="btn btn-primary btn-full btn-lg">
+            Ir a mi panel →
           </button>
         </div>
 
@@ -88,12 +88,14 @@ import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useAuthStore } from "../../Shared/stores/auth.js";
+import { useAppLogout } from "../../Shared/composables/useAppLogout.js";
 import api from "../../Shared/api.js";
 
 const { t } = useI18n();
 // Initialize i18n
 const router = useRouter();
 const auth = useAuthStore();
+const handleLogoutAction = useAppLogout();
 // Initialize router and auth store
 
 const bgInput = ref(null);
@@ -140,6 +142,8 @@ async function uploadFile(file, type) {
       });
       if (type === "background_check") docs.value.backgroundCheck = true;
       else docs.value.experience = true;
+      // Sync user data (updates documentsUploaded flag)
+      await auth.refreshUser();
     } catch (err) {
       error.value = err.response?.data?.error || t("common.error");
     } finally {
@@ -149,10 +153,11 @@ async function uploadFile(file, type) {
   reader.readAsDataURL(file);
 }
 
-function goToLogin() {
-// Function to go back to login
-  auth.clearAuth();
-  router.push("/login");
+async function goToDashboard() {
+// After uploading documents, refresh the user state (so the router guard sees
+// documentsUploaded=true) and navigate to the worker dashboard.
+  await auth.refreshUser();
+  router.push("/worker/dashboard");
 }
 </script>
 

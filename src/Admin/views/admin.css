@@ -1,0 +1,29 @@
+h1 { margin: 0; color: #0f172a; font-size: 1.65rem; }
+p { margin: .25rem 0 0; color: #64748b; }
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+button, .small { border: 0; border-radius: .65rem; background: #2563eb; color: white; padding: .65rem .85rem; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+.card { background: white; border: 1px solid #e2e8f0; border-radius: 1rem; box-shadow: 0 8px 30px rgba(15,23,42,.05); }
+.table-card { overflow: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
+th, td { text-align: left; padding: .9rem; border-bottom: 1px solid #e2e8f0; font-size: .9rem; vertical-align: top; }
+th { background: #f8fafc; color: #334155; font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; }
+.badge { display: inline-flex; padding: .25rem .55rem; border-radius: 999px; background: #e0f2fe; color: #075985; font-weight: 700; font-size: .75rem; }
+.badge.danger, .danger { background: #fee2e2; color: #991b1b; }
+.badge.warning, .warning { background: #fef3c7; color: #92400e; }
+.badge.muted-badge { background: #f1f5f9; color: #475569; }
+.success { background: #059669 !important; color: white !important; }
+.small { font-size: .78rem; padding: .5rem .65rem; }
+.link { background: #f1f5f9; color: #334155; }
+.actions { display: flex; gap: .45rem; flex-wrap: wrap; }
+.empty { text-align: center; color: #94a3b8; padding: 2rem; }
+.muted { color: #64748b; font-size: .82rem; }
+.error-box { background: #fee2e2; color: #991b1b; padding: .8rem; border-radius: .75rem; margin-bottom: .8rem; }
+.success-box { background: #dcfce7; color: #166534; padding: .8rem; border-radius: .75rem; margin: .8rem 0; }
+.filters { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.filters button { background: #e2e8f0; color: #334155; }
+.filters button.active { background: #2563eb; color: white; }
+.form-card { max-width: 560px; padding: 1rem; display: flex; flex-direction: column; gap: .65rem; }
+.form-card label { font-weight: 800; color: #334155; font-size: .88rem; }
+.form-card input, .form-card textarea { border: 1px solid #cbd5e1; border-radius: .7rem; padding: .75rem; font-size: .95rem; }
+.danger-btn { background: #dc2626; }
