@@ -17,7 +17,13 @@
       🚫 <strong>Cuenta suspendida</strong> — Tu cuenta está temporalmente suspendida.
       <div v-if="auth.suspendedUntil" class="suspension-until">Hasta: {{ formatSuspendedUntil(auth.suspendedUntil) }}</div>
       <div v-if="auth.suspensionReason" class="suspension-reason">Motivo: {{ auth.suspensionReason }}</div>
+      <button class="appeal-btn" @click="showAppealModal = true">
+        ⚐ {{ t('suspension.appealButton') || 'Reclamar suspensión' }}
+      </button>
     </div>
+
+    <!-- Modal de reclamo de suspensión. -->
+    <SuspensionAppealModal v-if="showAppealModal" @close="showAppealModal = false" />
 
     <!-- Banner: cuenta reportada -->
     <div v-if="hasReport" class="report-banner">
@@ -58,17 +64,17 @@
       </div>
 
       <div class="content-grid">
-        <!-- Monthly earnings chart -->
+        <!-- Monthly earnings chart (horizontal bars). -->
         <div class="card">
           <h3 class="section-title">{{ t('dashboard.monthlyEarnings') }}</h3>
           <div v-if="!adjustedMonthlyEarnings.length" class="empty-msg">Sin datos aún</div>
-          <div v-else class="chart">
-            <div v-for="m in adjustedMonthlyEarnings.slice(-6)" :key="m.month" class="chart-bar-wrap">
-              <div class="chart-bar-outer">
-                <div class="chart-bar" :style="{ height: (m.earnings / maxEarning * 100) + '%', background: '#2563eb' }"></div>
+          <div v-else class="chart-h">
+            <div v-for="m in adjustedMonthlyEarnings.slice(-6)" :key="m.month" class="chart-h-row">
+              <span class="chart-h-label">{{ formatMonthLabel(m.month) }}</span>
+              <div class="chart-h-track">
+                <div class="chart-h-fill" :style="{ width: (m.earnings / maxEarning * 100) + '%' }"></div>
               </div>
-              <span class="chart-label">{{ m.month.slice(5) }}</span>
-              <span class="chart-val">S/. {{ m.earnings.toFixed(2) }}</span>
+              <span class="chart-h-val">S/. {{ m.earnings.toFixed(2) }}</span>
             </div>
           </div>
         </div>
@@ -81,7 +87,7 @@
             <div v-for="b in bookings.slice(0,5)" :key="b.id" class="booking-row">
               <div class="booking-info">
                 <div class="booking-name">{{ b.clientName }}</div>
-                <div class="booking-meta">{{ t(`worker.services.${b.serviceType}`) }} · {{ b.date }}</div>
+                <div class="booking-meta">{{ servicesText(b) }} · {{ b.date }}</div>
               </div>
               <div class="booking-actions">
                 <div class="booking-amount">S/. {{ b.workerEarning?.toFixed(0) }}</div>
@@ -103,9 +109,11 @@ import { useRoute } from "vue-router";
 import api from "../../Shared/api.js";
 import { formatSuspendedUntil } from "../../Shared/utils/suspension.js";
 import { getMyWorkerBalance } from "../../Shared/services/paymentApi.js";
+import SuspensionAppealModal from "../../ReviewsAndEvaluation/components/SuspensionAppealModal.vue";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const auth = useAuthStore();
+const showAppealModal = ref(false);
 const route = useRoute();
 const stats = ref({});
 const bookings = ref([]);
@@ -142,7 +150,8 @@ if (typeof window !== "undefined") {
 
 // ── Computeds que ahora leen del balance del backend ─────────────────────
 // netEarnings: ganancias acumuladas del worker (después de comisión, todos los canales).
-// platformFee: comisión total cobrada por la plataforma (10% de los no-cash).
+// platformFee: comisión total cobrada por la plataforma (tasa configurable
+// por el admin desde /admin/settings; histórica por pago).
 // completedServices: cantidad de servicios pagados.
 //
 // Estas 3 reflejan lo que YA fue cobrado por el cliente. Los servicios completados
@@ -157,9 +166,34 @@ const adjustedMonthlyEarnings = computed(() => stats.value.monthlyEarnings || []
 
 const maxEarning = computed(() => Math.max(...adjustedMonthlyEarnings.value.map(m => m.earnings), 1));
 
+// Convierte "2026-06" → "Jun 2026" usando el locale del usuario. Intl maneja
+// solo la traducción de nombres de mes, así que el resultado se ve nativo
+// tanto en ES ("ene", "feb"…) como en EN ("Jan", "Feb"…).
+function formatMonthLabel(yyyyMm) {
+  if (!yyyyMm || typeof yyyyMm !== "string") return "";
+  const [year, month] = yyyyMm.split("-").map(Number);
+  if (!year || !month) return yyyyMm;
+  const loc = (locale.value === "en") ? "en-US" : "es-PE";
+  // Usamos el día 1 del mes solo porque Date lo requiere; lo importante es year+month.
+  const d = new Date(year, month - 1, 1);
+  const monthName = d.toLocaleString(loc, { month: "short" });
+  // Capitaliza primera letra ("jun" → "Jun") porque algunos locales devuelven en minúscula.
+  const niceMonth = monthName.charAt(0).toUpperCase() + monthName.slice(1).replace(".", "");
+  return `${niceMonth} ${year}`;
+}
+
 function statusBadge(s) {
   const map = { pending:'badge badge-yellow', accepted:'badge badge-blue', completed:'badge badge-green', rejected:'badge badge-red', cancelled:'badge badge-gray' };
   return map[s] || 'badge badge-gray';
+}
+
+// Texto de servicios del booking. Soporta la lista nueva `serviceTypes` y el
+// campo legacy `serviceType` (reservas viejas). Joinea con coma.
+function servicesText(b) {
+  const list = Array.isArray(b?.serviceTypes) && b.serviceTypes.length > 0
+    ? b.serviceTypes
+    : (b?.serviceType ? [b.serviceType] : []);
+  return list.map(s => t(`worker.services.${s}`)).join(", ");
 }
 
 // Carga inicial + refrescos posteriores. showSpinner=true solo en la carga inicial;
@@ -250,12 +284,12 @@ onUnmounted(() => {
 
 .section-title { font-weight: 700; font-size: 1.125rem; color: #1e293b; margin-bottom: 1.25rem; }
 
-.chart { display: flex; gap: 0.75rem; align-items: flex-end; height: 160px; padding-top: 1rem; }
-.chart-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
-.chart-bar-outer { flex: 1; width: 100%; display: flex; align-items: flex-end; background: #f1f5f9; border-radius: 6px 6px 0 0; }
-.chart-bar { width: 100%; min-height: 4px; border-radius: 6px 6px 0 0; transition: height 0.5s ease-out; }
-.chart-label { font-size: 0.75rem; font-weight: 600; color: #64748b; }
-.chart-val { font-size: 0.6875rem; color: #94a3b8; }
+.chart-h { display: flex; flex-direction: column; gap: 0.625rem; padding-top: 0.5rem; }
+.chart-h-row { display: grid; grid-template-columns: 80px 1fr 90px; align-items: center; gap: 0.75rem; }
+.chart-h-label { font-size: 0.8125rem; font-weight: 600; color: #475569; text-align: right; white-space: nowrap; }
+.chart-h-track { height: 1.5rem; background: #f1f5f9; border-radius: 999px; overflow: hidden; }
+.chart-h-fill { height: 100%; background: linear-gradient(90deg, #2563eb 0%, #3b82f6 100%); border-radius: 999px; transition: width 0.5s ease-out; min-width: 4px; }
+.chart-h-val { font-size: 0.8125rem; font-weight: 700; color: #1e293b; text-align: right; white-space: nowrap; }
 
 .empty-msg { color: #94a3b8; font-size: 0.875rem; text-align: center; padding: 3rem 0; }
 
@@ -277,6 +311,8 @@ onUnmounted(() => {
 .suspension-banner { background: #fee2e2; color: #991b1b; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #dc2626; }
 .suspension-until { font-weight: 500; font-size: 0.875rem; margin-top: 0.25rem; }
 .suspension-reason { font-weight: 400; font-size: 0.8125rem; color: #7f1d1d; margin-top: 0.25rem; font-style: italic; }
+.appeal-btn { margin-top: 0.75rem; background: white; color: #991b1b; border: 1px solid #fecaca; padding: 0.5rem 0.875rem; border-radius: 0.5rem; font-size: 0.8125rem; font-weight: 600; cursor: pointer; }
+.appeal-btn:hover { background: #fef2f2; border-color: #fca5a5; }
 .report-banner { background: #fef3c7; color: #92400e; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #f59e0b; }
 .pending-banner { background: #ede9fe; color: #5b21b6; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #7c3aed; line-height: 1.5; }
 .availability-banner { background: #e0f2fe; color: #075985; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #0284c7; line-height: 1.5; }

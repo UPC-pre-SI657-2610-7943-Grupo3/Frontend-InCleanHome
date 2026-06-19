@@ -76,17 +76,6 @@
           </div>
         </div>
 
-        <!-- Info box -->
-<!-- Security info box -->
-        <div class="card secure-card">
-          <div class="secure-content">
-            <span class="secure-icon">🔒</span>
-            <div>
-              <div class="secure-title">{{ t('payments.secureTitle') }}</div>
-              <p class="secure-desc">{{ t('payments.secureDesc') }}</p>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -112,19 +101,22 @@ const error = ref("");
 const form = ref({ type: "yape", label: "", details: "", isDefault: false });
 // Form data object
 
+// Tipos válidos para registrar como método de pago propio del cliente:
+//   - mercadopago: pagos con tarjeta vía Mercado Pago (pasarela).
+//   - yape / plin / bank_transfer: flujos manuales (el cliente paga "por fuera"
+//     y confirma en la app).
+// "cash" fue removido: no permite cobrar comisión ni emitir comprobante trazable.
+// "card" / "izipay_card" / "paypal_card" fueron removidos: solo existe un canal
+// de pasarela (Mercado Pago) que cubre todas las tarjetas internamente.
 const paymentTypes = computed(() => ({
-  cash: t("booking.paymentTypes.cash"),
-  card: t("booking.paymentTypes.card"),
-  paypal_card: t("booking.paymentTypes.paypal_card"),
-  yape: t("booking.paymentTypes.yape"),
-  plin: t("booking.paymentTypes.plin"),
+  mercadopago:   t("booking.paymentTypes.mercadopago") || "Mercado Pago",
+  yape:          t("booking.paymentTypes.yape"),
+  plin:          t("booking.paymentTypes.plin"),
   bank_transfer: t("booking.paymentTypes.bank_transfer"),
 }));
-// Computed payment types
 
 function paymentIcon(type) {
-// Function to get payment icon
-  return { cash: "💵", card: "💳", paypal_card: "🅿️", yape: "📱", plin: "📲", bank_transfer: "🏦" }[type] || "💰";
+  return { mercadopago: "💳", yape: "📱", plin: "📲", bank_transfer: "🏦" }[type] || "💰";
 }
 
 async function addMethod() {
@@ -301,12 +293,6 @@ onMounted(async () => {
 .error-box { background: #fee2e2; color: #991b1b; }
 
 .submit-btn { margin-top: 0.5rem; }
-
-.secure-card { background: #f0fdf4; border-color: #a7f3d0; }
-.secure-content { display: flex; gap: 1rem; align-items: center; }
-.secure-icon { font-size: 1.875rem; }
-.secure-title { font-weight: 600; color: #065f46; margin-bottom: 0.25rem; font-size: 1.125rem; }
-.secure-desc { font-size: 0.875rem; color: #047857; margin: 0; }
 
 .spinner { border: 3px solid rgba(0,0,0,0.08); border-top-color: #2563eb; border-radius:50%; width:28px; height:28px; animation: spin 1s linear infinite; }
 .spinner-lg { width:36px; height:36px; }

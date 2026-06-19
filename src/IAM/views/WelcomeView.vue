@@ -63,7 +63,7 @@
             <div class="form-grid">
               <div class="form-group">
                 <label class="label">{{ t('auth.name') }} *</label>
-                <input v-model="form.name" type="text" class="input-field" required />
+                <input v-model="form.name" type="text" class="input-field" :placeholder="t('auth.namePlaceholder')" required />
               </div>
               <div class="form-group">
                 <label class="label">{{ t('auth.phone') }} *</label>
@@ -117,6 +117,15 @@
                   <label class="label">{{ t('worker.experienceYears') }}</label>
                   <input v-model.number="form.experienceYears" type="number" class="input-field" min="0" max="50" />
                 </div>
+              </div>
+
+              <!-- Tarifa de domingo: obligatoria. Mensaje de ayuda debajo
+                   explica que solo aplica si la trabajadora elige trabajar ese día. -->
+              <div class="form-group">
+                <label class="label">{{ t('booking.hourlyRateSunday') || 'Tarifa por hora — Domingos (S/.)' }} *</label>
+                <input v-model.number="form.hourlyRateSunday" type="number" class="input-field"
+                       required min="0" step="5" />
+                <p class="hint-small">{{ t('booking.hourlyRateSundayHelp') || 'En caso trabajes los domingos, se aplicará esta tarifa.' }}</p>
               </div>
 
               <div class="form-group">
@@ -199,6 +208,9 @@ const form = ref({
   serviceTypes: [],
   zones: [],
   hourlyRate: 25,
+  // Default = misma tarifa normal. Es obligatorio: la trabajadora la confirma o
+  // cambia antes de continuar. Se envía al backend en complete-registration.
+  hourlyRateSunday: 25,
   experienceYears: 1,
   bio: "",
 });
@@ -229,8 +241,9 @@ onMounted(async () => {
     if (!auth0.isAuthenticated.value) { router.replace("/login"); return; }
     const u = auth0.user.value;
     userEmail.value = u?.email || "";
-    // Pre-rellenar nombre con el de Auth0 si lo tenemos (el usuario puede editarlo).
-    if (u?.name && form.value.name === "") form.value.name = u.name;
+    // Importante: NO pre-rellenamos `form.name` con datos de Auth0/email.
+    // El campo debe arrancar vacío y mostrar el placeholder "Nombre" para que
+    // la usuaria escriba su nombre real, sin sugerirle el email del proveedor.
   } catch {
     router.replace("/login");
   }
@@ -238,24 +251,41 @@ onMounted(async () => {
 
 async function handleContinue() {
   if (!selectedRole.value) return;
+  error.value = "";
 
-  // Validaciones de cliente.
-  if (!form.value.name.trim()) {
-    error.value = t("auth.nameRequired") || "El nombre es obligatorio";
+  // ── Validaciones de formato (cliente y trabajadora) ────────────────
+  // Nombre: solo letras (tildes/ñ/espacios).
+  const name = (form.value.name || "").trim();
+  if (!name) {
+    error.value = t("auth.fillFieldsCorrectly");
     return;
   }
-  if (!form.value.phone.trim()) {
-    error.value = t("auth.phoneRequired") || "El teléfono es obligatorio";
+  if (!/^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]+$/.test(name)) {
+    error.value = t("auth.fillFieldsCorrectly");
     return;
   }
-  // Validaciones extra para worker.
-  if (selectedRole.value === "worker" && form.value.serviceTypes.length === 0) {
-    error.value = t("auth.serviceRequired") || "Selecciona al menos un tipo de servicio";
+  // Teléfono: solo dígitos, 9 exactamente. Aceptamos un "+51" opcional al inicio.
+  const phoneRaw = (form.value.phone || "").trim();
+  const phoneDigits = phoneRaw.replace(/^\+51\s?/, "").replace(/\s+/g, "");
+  if (!/^\d{9}$/.test(phoneDigits)) {
+    error.value = t("auth.fillFieldsCorrectly");
     return;
+  }
+
+  // ── Validaciones extra para worker ─────────────────────────────────
+  if (selectedRole.value === "worker") {
+    const age = Number(form.value.age);
+    if (!Number.isInteger(age) || age < 18 || age > 80) {
+      error.value = t("auth.fillFieldsCorrectly");
+      return;
+    }
+    if (!Array.isArray(form.value.serviceTypes) || form.value.serviceTypes.length === 0) {
+      error.value = t("auth.fillFieldsCorrectly");
+      return;
+    }
   }
 
   loading.value = true;
-  error.value = "";
   try {
     const accessToken = await auth0.getAccessTokenSilently({
       authorizationParams: { audience: import.meta.env.VITE_AUTH0_AUDIENCE },
@@ -266,8 +296,8 @@ async function handleContinue() {
     const payload = {
       accessToken,
       role: selectedRole.value,
-      name: form.value.name.trim(),
-      phone: form.value.phone.trim(),
+      name: name,
+      phone: phoneDigits,
     };
     if (selectedRole.value === "worker") {
       Object.assign(payload, {
@@ -276,6 +306,7 @@ async function handleContinue() {
         serviceTypes: form.value.serviceTypes,
         zones: form.value.zones,
         hourlyRate: form.value.hourlyRate,
+        hourlyRateSunday: form.value.hourlyRateSunday,
         experienceYears: form.value.experienceYears,
         bio: form.value.bio,
       });
@@ -364,4 +395,5 @@ async function handleContinue() {
   .role-grid { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
 }
+.hint-small { font-size: 0.75rem; color: #64748b; margin: 0.25rem 0 0; line-height: 1.4; }
 </style>

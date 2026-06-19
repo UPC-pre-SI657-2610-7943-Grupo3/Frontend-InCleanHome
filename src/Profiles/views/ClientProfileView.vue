@@ -112,8 +112,22 @@ onMounted(async () => {
 });
 
 async function save() {
-  if (!form.value.name.trim()) {
-    error.value = t('validation.nameRequired') || "El nombre es requerido";
+  // Validación: nombre solo letras (con tildes/ñ y espacios), no vacío.
+  const name = form.value.name.trim();
+  if (!name) {
+    error.value = t('auth.nameRequired');
+    return;
+  }
+  const nameRegex = /^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]+$/;
+  if (!nameRegex.test(name)) {
+    error.value = t('auth.nameInvalid');
+    return;
+  }
+  // Validación: teléfono solo dígitos y exactamente 9.
+  const phone = (form.value.phone || "").trim();
+  const phoneRegex = /^\d{9}$/;
+  if (!phoneRegex.test(phone)) {
+    error.value = t('auth.phoneInvalid');
     return;
   }
 
@@ -122,8 +136,8 @@ async function save() {
 
   try {
     const { data } = await api.patch("/my-profile", {
-      name: form.value.name,
-      phone: form.value.phone
+      name: name,
+      phone: phone
     });
 
     const updatedUser = { ...auth.user, ...data };

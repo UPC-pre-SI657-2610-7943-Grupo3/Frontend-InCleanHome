@@ -16,6 +16,8 @@
         <router-link to="/admin/approve">{{ t('auth.admin.approve') }}</router-link>
         <router-link to="/admin/reports">{{ t('auth.admin.reports') }}</router-link>
         <router-link to="/admin/suspend">{{ t('auth.admin.suspend') }}</router-link>
+        <router-link to="/admin/appeals">{{ t('suspension.adminMenu') || 'Reclamos' }}</router-link>
+        <router-link to="/admin/settings">{{ t('adminSettings.menu') || 'Configuración' }}</router-link>
       </nav>
 
       <button @click="toggleLang" class="nav-item lang-btn">

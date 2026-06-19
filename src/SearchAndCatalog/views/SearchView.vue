@@ -11,7 +11,13 @@
       🚫 <strong>Cuenta suspendida</strong> — Tu cuenta está temporalmente suspendida y no puedes hacer reservas.
       <div v-if="auth.suspendedUntil" class="suspension-until">Hasta: {{ formatSuspendedUntil(auth.suspendedUntil) }}</div>
       <div v-if="auth.suspensionReason" class="suspension-reason">Motivo: {{ auth.suspensionReason }}</div>
+      <button class="appeal-btn" @click="showAppealModal = true">
+        ⚐ {{ t('suspension.appealButton') || 'Reclamar suspensión' }}
+      </button>
     </div>
+
+    <!-- Modal de reclamo de suspensión. -->
+    <SuspensionAppealModal v-if="showAppealModal" @close="showAppealModal = false" />
 
     <div class="search-layout">
       <!-- Filters sidebar -->
@@ -24,10 +30,18 @@
           <div class="filters-list">
             <div class="form-group">
               <label class="label">{{ t('search.serviceType') }}</label>
-              <select v-model="filters.serviceType" class="input-field" @change="doSearch">
-                <option value="">{{ t('search.allServices') }}</option>
-                <option v-for="s in serviceOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
-              </select>
+              <!-- Multi-select de servicios: el usuario puede elegir uno o varios.
+                   El backend interpreta esto como AND: el worker debe ofrecer
+                   TODOS los servicios marcados. Si la combinación no matchea con
+                   ninguna trabajadora, mostramos el mismo "No encontramos
+                   trabajadoras con esos filtros" que ya existe abajo. -->
+              <MultiSelectDropdown
+                v-model="filters.serviceTypes"
+                :options="serviceOptions"
+                :placeholder="t('search.allServices')"
+                :all-label="t('search.allServices')"
+                @change="doSearch"
+              />
             </div>
             <div class="form-group">
               <label class="label">{{ t('search.zone') }}</label>
@@ -88,7 +102,13 @@
           </button>
           <div v-if="showFilters" class="card mt-3">
             <div class="filters-list-mobile">
-              <select v-model="filters.serviceType" class="input-field" @change="doSearch"><option value="">{{ t('search.allServices') }}</option><option v-for="s in serviceOptions" :key="s.value" :value="s.value">{{ s.label }}</option></select>
+              <MultiSelectDropdown
+                v-model="filters.serviceTypes"
+                :options="serviceOptions"
+                :placeholder="t('search.allServices')"
+                :all-label="t('search.allServices')"
+                @change="doSearch"
+              />
               <select v-model="filters.zone" class="input-field" @change="doSearch"><option value="">{{ t('search.allZones') }}</option><option v-for="z in zoneOptions" :key="z.value" :value="z.value">{{ z.label }}</option></select>
               <select v-model="filters.gender" class="input-field" @change="doSearch"><option value="">{{ t('search.allGenders') }}</option><option value="female">{{ t('worker.female') }}</option><option value="male">{{ t('worker.male') }}</option></select>
             </div>
@@ -130,17 +150,21 @@ import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import api from "../../Shared/api.js";
 import WorkerCard from "../components/WorkerCard.vue";
+import MultiSelectDropdown from "../../Shared/components/MultiSelectDropdown.vue";
+import SuspensionAppealModal from "../../ReviewsAndEvaluation/components/SuspensionAppealModal.vue";
 import { useAuthStore } from "../../Shared/stores/auth.js";
 import { formatSuspendedUntil } from "../../Shared/utils/suspension.js";
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const showAppealModal = ref(false);
 const workers = ref([]);
 const loading = ref(true);
 const showFilters = ref(false);
 const sortBy = ref("relevance");
-// availableDay: índice de día (0=Dom ... 6=Sáb) o "" para cualquiera.
-const filters = ref({ serviceType: "", zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "", availableDay: "" });
+// serviceTypes: lista de servicios marcados (AND con el backend). availableDay:
+// índice de día (0=Dom ... 6=Sáb) o "" para cualquiera.
+const filters = ref({ serviceTypes: [], zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "", availableDay: "" });
 // IDs de trabajadoras disponibles el día filtrado (se llena al aplicar el filtro).
 const availableWorkerIds = ref(null);
 
@@ -176,6 +200,13 @@ async function doSearch() {
     Object.entries(filters.value).forEach(([k, v]) => {
       // availableDay no es un parámetro del backend; se aplica en cliente.
       if (k === "availableDay") return;
+      // serviceTypes (lista) se serializa como CSV para que el backend lo
+      // parsee con split(','). Si está vacía, no agregamos el parámetro y el
+      // backend devuelve todos los workers que cumplan los demás filtros.
+      if (k === "serviceTypes") {
+        if (Array.isArray(v) && v.length > 0) params.serviceTypes = v.join(",");
+        return;
+      }
       if (v !== "" && v !== null) params[k] = v;
     });
     const { data } = await api.get("/workers", { params });
@@ -222,7 +253,7 @@ const displayedWorkers = computed(() => {
 });
 
 function clearFilters() {
-  filters.value = { serviceType: "", zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "", availableDay: "" };
+  filters.value = { serviceTypes: [], zone: "", gender: "", minAge: "", maxAge: "", maxHourlyRate: "", minRating: "", availableDay: "" };
   availableWorkerIds.value = null;
   sortBy.value = "relevance";
   doSearch();
@@ -366,4 +397,6 @@ onMounted(doSearch);
 .suspension-banner { background: #fee2e2; color: #991b1b; padding: 1rem 1.25rem; border-radius: 0.75rem; margin-bottom: 1.25rem; font-weight: 600; border-left: 4px solid #dc2626; }
 .suspension-until { font-weight: 500; font-size: 0.875rem; margin-top: 0.25rem; }
 .suspension-reason { font-weight: 400; font-size: 0.8125rem; color: #7f1d1d; margin-top: 0.25rem; font-style: italic; }
+.appeal-btn { margin-top: 0.75rem; background: white; color: #991b1b; border: 1px solid #fecaca; padding: 0.5rem 0.875rem; border-radius: 0.5rem; font-size: 0.8125rem; font-weight: 600; cursor: pointer; }
+.appeal-btn:hover { background: #fef2f2; border-color: #fca5a5; }
 </style>

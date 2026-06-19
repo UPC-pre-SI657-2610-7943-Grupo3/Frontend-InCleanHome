@@ -27,9 +27,11 @@
               <span v-else class="muted">—</span>
             </td>
             <td class="col-actions">
-              <button v-if="u.documentsUploaded" class="small success" @click="approveDocs(u)">✅ {{ t("auth.admin.btnapprove") }}</button>
-              <button v-if="u.documentsUploaded" class="small danger" @click="rejectDocs(u)" style="margin-left: 6px;">❌ Rechazar</button>
-              <span v-else class="muted">{{ t("auth.admin.nodocs") }}</span>
+              <div class="actions-wrap">
+                <button v-if="u.documentsUploaded" class="small success" @click="approveDocs(u)">✅ {{ t("auth.admin.btnapprove") }}</button>
+                <button v-if="u.documentsUploaded" class="small danger" @click="rejectDocs(u)">❌ Rechazar</button>
+                <span v-if="!u.documentsUploaded" class="muted">{{ t("auth.admin.nodocs") }}</span>
+              </div>
             </td>
           </tr>
           <tr v-if="pendingUsers.length === 0">
@@ -141,7 +143,18 @@ onMounted(load);
 <style scoped>
 /* Columnas con ancho fijo para evitar desnivel */
 .col-docs    { width: 170px; text-align: center; vertical-align: middle; }
-.col-actions { width: 160px; text-align: center; vertical-align: middle; }
+.col-actions { width: 230px; text-align: center; vertical-align: middle; }
+
+/* Wrap con gap claro entre Aprobar y Rechazar (en lugar de margin-left fijo).
+   Permite que se acomoden en una línea con respiro o se apilen si la columna
+   se vuelve más estrecha en mobile. */
+.actions-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
 
 /* Todas las celdas alineadas verticalmente */
 table td, table th { vertical-align: middle; }

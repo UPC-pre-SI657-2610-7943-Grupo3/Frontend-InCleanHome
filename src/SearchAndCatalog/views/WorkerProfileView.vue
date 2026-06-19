@@ -38,8 +38,18 @@
               <div v-if="workerSuspended" class="suspended-banner">
                 🚫 Cuenta suspendida hasta {{ formatSuspendedUntil(worker.suspendedUntil) }}
               </div>
-              <router-link v-if="!workerSuspended" :to="`/client/worker/${worker.id}/book`" class="btn btn-primary btn-full">📅 {{ t('profile.book') }}</router-link>
-              <button v-else class="btn btn-disabled btn-full" disabled>📅 {{ t('profile.book') }}</button>
+              <!-- Banner: trabajadora sin disponibilidad configurada. La reserva
+                   queda bloqueada porque sin slots no se puede pedir horario. -->
+              <div v-else-if="!workerLoadingAvail && !hasAnyAvailability" class="incomplete-banner">
+                ⚠️ {{ t('booking.workerProfileIncomplete') }}
+              </div>
+              <!-- Botón Reservar: deshabilitado cuando la trabajadora está suspendida
+                   O cuando no tiene disponibilidad configurada. Si todo OK, link al flujo. -->
+              <router-link v-if="canBook" :to="`/client/worker/${worker.id}/book`" class="btn btn-primary btn-full">📅 {{ t('profile.book') }}</router-link>
+              <button v-else
+                      class="btn btn-disabled btn-full"
+                      :title="workerSuspended ? '' : t('booking.workerProfileIncomplete')"
+                      disabled>📅 {{ t('profile.book') }}</button>
 
               <router-link v-if="!workerSuspended" :to="{ path: `/client/messages/${worker.id}`, query: { name: worker.name } }" class="btn btn-secondary btn-full">💬 {{ t('profile.contact') }}</router-link>
               <button v-else class="btn btn-disabled btn-full" disabled>💬 {{ t('profile.contact') }}</button>
@@ -139,6 +149,18 @@ const showReport = ref(false);
 
 const workerSuspended = computed(() => isActiveSuspension(worker.value?.suspendedUntil));
 
+// Tiene al menos un slot marcado como disponible. Si no hay ninguno, no se
+// puede reservar porque el flujo de calendario no tiene horarios que ofrecer.
+const hasAnyAvailability = computed(() =>
+  Array.isArray(availability.value) && availability.value.some(s => s.isAvailable)
+);
+// Loader específico de la consulta de disponibilidad para no mostrar el banner
+// "perfil incompleto" antes de que termine la carga.
+const workerLoadingAvail = ref(true);
+// Habilitamos el botón Reservar solo si la trabajadora no está suspendida y
+// además tiene disponibilidad configurada (información mínima del perfil).
+const canBook = computed(() => !workerSuspended.value && hasAnyAvailability.value);
+
 const days = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
 const colors = ["#2563eb","#8b5cf6","#06b6d4","#10b981","#f59e0b","#ef4444"];
 const initials = computed(() => worker.value?.name?.split(" ").map(n => n[0]).slice(0,2).join("").toUpperCase() || "?");
@@ -157,7 +179,10 @@ onMounted(async () => {
     worker.value = w.data;
     availability.value = av.data;
     reviews.value = rv.data;
-  } catch { } finally { loading.value = false; }
+  } catch { } finally {
+    loading.value = false;
+    workerLoadingAvail.value = false;
+  }
 });
 </script>
 
@@ -239,6 +264,18 @@ onMounted(async () => {
   text-align: center;
   margin-bottom: 0.5rem;
   line-height: 1.3;
+}
+.incomplete-banner {
+  padding: 0.75rem;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 0.5rem;
+  line-height: 1.4;
+  border-left: 3px solid #f59e0b;
 }
 .btn-disabled {
   background: #e2e8f0 !important;

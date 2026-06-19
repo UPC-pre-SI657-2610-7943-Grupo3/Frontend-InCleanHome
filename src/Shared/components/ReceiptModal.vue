@@ -11,10 +11,13 @@
         <span class="badge badge-green">{{ t(`booking.status.${booking.status}`) }}</span>
       </div>
 
-      <h3 class="receipt-title">{{ t('booking.receipt') }}</h3>
+      <h3 class="receipt-title">{{ modalTitle }}</h3>
       <div class="receipt-meta">
         <span>{{ t('booking.receiptNumber') }}: <strong>#{{ String(booking.id).padStart(6, '0') }}</strong></span>
-        <span>{{ t('booking.receiptDate') }}: <strong>{{ formatDate(booking.createdAt) }}</strong></span>
+        <!-- Fecha de emisión = fecha del servicio (no la del pago).
+             Académicamente esto simula que el comprobante se genera el mismo
+             día que la trabajadora prestó el servicio. -->
+        <span>{{ t('booking.receiptDate') }}: <strong>{{ formatDate(booking.date) }}</strong></span>
       </div>
 
       <div class="receipt-rows">
@@ -22,17 +25,23 @@
         <div class="r-row"><span>{{ t('booking.receiptWorker') }}</span><span>{{ booking.workerName }}</span></div>
         <div class="r-row"><span>{{ t('booking.receiptClient') }}</span><span>{{ booking.clientName }}</span></div>
         <div class="r-row"><span>{{ t('history.date') }}</span><span>{{ booking.date }} · {{ booking.startTime }}–{{ booking.endTime }}</span></div>
-        <div v-if="channelLabel" class="r-row"><span>Método de pago</span><span>{{ channelLabel }}</span></div>
-        <div v-if="payment && payment.izipayOrderId" class="r-row"><span>Orden Izipay</span><span style="font-family: ui-monospace, monospace; font-size: 0.75rem;">{{ payment.izipayOrderId }}</span></div>
-        <div v-if="payment && payment.paypalOrderId" class="r-row"><span>Orden PayPal</span><span style="font-family: ui-monospace, monospace; font-size: 0.75rem;">{{ payment.paypalOrderId }}</span></div>
-        <div v-if="payment && payment.paypalCaptureId" class="r-row"><span>Captura PayPal</span><span style="font-family: ui-monospace, monospace; font-size: 0.75rem;">{{ payment.paypalCaptureId }}</span></div>
+      </div>
+
+      <!-- Método de pago destacado (caja propia, no una fila más).
+           Es lo primero que cliente y trabajadora buscan al ver el comprobante. -->
+      <div v-if="channelLabel" class="payment-method-box">
+        <span class="pm-label">{{ t('booking.paymentMethod') || 'Método de pago' }}</span>
+        <span class="pm-value">{{ channelLabel }}</span>
+        <div v-if="payment && payment.mercadoPagoPaymentId" class="pm-extra">
+          ID: <span class="mono">{{ payment.mercadoPagoPaymentId }}</span>
+        </div>
       </div>
 
       <div class="receipt-amounts">
         <!-- Vista TRABAJADORA: ve el desglose con la comisión descontada y su neto -->
         <template v-if="showWorkerNet">
           <div class="a-row"><span>{{ t('booking.receiptServiceAmount') }}</span><span>S/. {{ num(booking.totalAmount) }}</span></div>
-          <div class="a-row muted"><span>{{ t('booking.receiptFee') }}</span><span>− S/. {{ num(booking.platformFee) }}</span></div>
+          <div class="a-row muted"><span>{{ t('booking.receiptFee', { rate: feePercent }) }}</span><span>− S/. {{ num(booking.platformFee) }}</span></div>
           <div class="a-row total worker-net"><span>{{ t('booking.receiptYouReceive') }}</span><span>S/. {{ num(booking.workerEarning) }}</span></div>
         </template>
 
@@ -58,37 +67,75 @@ import { useI18n } from "vue-i18n";
 const props = defineProps({
   booking: { type: Object, required: true },
   // Pago efectivo si existe (ServicePayment). Si está presente y el canal fue
-  // izipay_card, se muestra una línea adicional con el order ID. Si no se
-  // pasa, el modal sigue funcionando con solo los datos del booking.
+  // mercadopago, se muestra una línea adicional con el payment_id de MP.
   payment: { type: Object, default: null },
   showWorkerNet: { type: Boolean, default: false },
+  // Determina el título del modal:
+  //   'client' → "Recibo de Pago" (es el cliente quien lo abre)
+  //   'worker' → "Detalle de Orden" (es la trabajadora quien lo abre)
+  // Si no se pasa, default 'client'.
+  mode: { type: String, default: "client" },
 });
 defineEmits(["close"]);
 
 const { t } = useI18n();
 
+// El título cambia según el rol que abre el modal. Mismo modal, distinta etiqueta.
+const modalTitle = computed(() => {
+  return props.mode === "worker"
+    ? (t('booking.viewWorkerOrder') || 'Detalle de Orden')
+    : (t('booking.viewReceipt') || 'Recibo de Pago');
+});
+
+// Porcentaje real de comisión aplicado a ESTE booking, derivado de los montos
+// almacenados (que son inmutables tras el pago). Si el admin cambió la tasa
+// después del pago, esta cuenta sigue mostrando la tasa con la que se cobró.
+// Por eso es la métrica correcta — auditable.
+const feePercent = computed(() => {
+  const total = Number(props.booking.totalAmount) || 0;
+  const fee = Number(props.booking.platformFee) || 0;
+  if (total <= 0) return 0;
+  return Math.round((fee / total) * 100);
+});
+
 const channelLabel = computed(() => {
   if (!props.payment) return null;
   return ({
-    izipay_card: "💳 Tarjeta (Izipay)",
-    paypal: "🅿️ PayPal",
-    yape: "📱 Yape",
-    plin: "📲 Plin",
-    bank_transfer: "🏦 Transferencia bancaria",
-    cash: "💵 Efectivo",
+    mercadopago:   "Mercado Pago",
+    yape:          "Yape",
+    plin:          "Plin",
+    bank_transfer: "Transferencia bancaria",
   })[props.payment.channel] || props.payment.channel;
 });
 
+// Soporta tanto la lista nueva `serviceTypes` (multi-servicio) como el campo
+// legacy `serviceType`. Si la lista existe, joineamos con coma; si solo hay
+// el singular, lo traducimos como antes.
 const serviceLabel = computed(() => {
-  const key = `worker.services.${props.booking.serviceType}`;
-  const translated = t(key);
-  return translated === key ? props.booking.serviceType : translated;
+  const b = props.booking;
+  const list = Array.isArray(b.serviceTypes) && b.serviceTypes.length > 0
+    ? b.serviceTypes
+    : (b.serviceType ? [b.serviceType] : []);
+  if (list.length === 0) return "";
+  return list.map(s => {
+    const key = `worker.services.${s}`;
+    const translated = t(key);
+    return translated === key ? s : translated;
+  }).join(", ");
 });
 
 function num(v) { return (Number(v) || 0).toFixed(2); }
+
 function formatDate(d) {
   if (!d) return "—";
-  try { return new Date(d).toLocaleDateString(); } catch { return d; }
+  try {
+    // Si es YYYY-MM-DD (sin hora), forzamos la hora local añadiendo T00:00:00
+    const isoDateOnly = typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d); //Si d es un string con formato YYYY-MM-DD, entonces isoDateOnly será true
+    const parseInput = isoDateOnly ? `${d}T00:00:00` : d;
+    return new Date(parseInput).toLocaleDateString();
+  } catch {
+    return d;
+  }
 }
 
 // Genera un comprobante en PDF con el mismo diseño que la ventana modal.
@@ -157,7 +204,8 @@ async function downloadPdf() {
   doc.setTextColor(NAVY[0], NAVY[1], NAVY[2]);
   doc.setFontSize(15);
   doc.setFont("helvetica", "bold");
-  doc.text(t('booking.receipt'), PAD_X, y);
+  // Título dinámico según rol — el mismo que se muestra en el modal.
+  doc.text(modalTitle.value, PAD_X, y);
 
 
   y += 18;
@@ -166,7 +214,8 @@ async function downloadPdf() {
   doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
   doc.text(t('booking.receiptNumber') + `: #${String(b.id).padStart(6, "0")}`, PAD_X, y);
   y += 14;
-  doc.text(t('booking.receiptDate') + `: ${formatDate(b.createdAt)}`, PAD_X, y);
+  // Fecha de emisión = fecha del servicio (no la del pago).
+  doc.text(t('booking.receiptDate') + `: ${formatDate(b.date)}`, PAD_X, y);
 
   // --- Detalle del servicio (filas etiqueta/valor) ---
   y += 22;
@@ -190,6 +239,35 @@ async function downloadPdf() {
   rowDetail(t('booking.receiptClient'), b.clientName);
   rowDetail(t('history.date'), `${b.date} · ${b.startTime}–${b.endTime}`);
 
+  // --- Caja destacada del método de pago (si hubo pago) ---
+  if (channelLabel.value) {
+    y += 8;
+    const boxX = PAD_X;
+    const boxW = 595 - PAD_X * 2;
+    const hasExtra = props.payment && props.payment.mercadoPagoPaymentId;
+    const boxH = hasExtra ? 52 : 38;
+    // Fondo azul suave + borde
+    doc.setFillColor(239, 246, 255);
+    doc.setDrawColor(191, 219, 254);
+    doc.roundedRect(boxX, y, boxW, boxH, 6, 6, "FD");
+    // Etiqueta
+    doc.setFontSize(8);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(29, 78, 216);
+    doc.text((t('booking.paymentMethod') || 'MÉTODO DE PAGO').toUpperCase(), boxX + 12, y + 14);
+    // Valor
+    doc.setFontSize(12);
+    doc.setTextColor(NAVY[0], NAVY[1], NAVY[2]);
+    doc.text(channelLabel.value, boxX + 12, y + 30);
+    if (hasExtra) {
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139);
+      doc.text(`ID: ${props.payment.mercadoPagoPaymentId}`, boxX + 12, y + 46);
+    }
+    y += boxH + 10;
+  }
+
   y += 6;
   doc.line(PAD_X, y, 595 - PAD_X, y);
   y += 22;
@@ -207,7 +285,7 @@ async function downloadPdf() {
 
   if (props.showWorkerNet) {
     rowAmount(t('booking.receiptServiceAmount'), `S/. ${num(b.totalAmount)}`);
-    rowAmount(t('booking.receiptFee'), `S/.${num(b.platformFee)}`, { color: LIGHT });
+    rowAmount(t('booking.receiptFee', { rate: feePercent.value }), `S/.${num(b.platformFee)}`, { color: LIGHT });
     y += 4;
     doc.setLineDashPattern([2, 2], 0);
     doc.line(PAD_X, y, 595 - PAD_X, y);
@@ -251,6 +329,22 @@ async function downloadPdf() {
 .r-row { display: flex; justify-content: space-between; font-size: 0.875rem; }
 .r-row span:first-child { color: #64748b; }
 .r-row span:last-child { color: #1e293b; font-weight: 500; }
+
+/* Método de pago destacado: caja propia con borde azul y fondo suave. */
+.payment-method-box {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.875rem;
+  margin: 0.75rem 0 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.pm-label { font-size: 0.75rem; color: #1d4ed8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+.pm-value { font-size: 1rem; color: #1e293b; font-weight: 700; }
+.pm-extra { font-size: 0.75rem; color: #64748b; margin-top: 0.15rem; }
+.pm-extra .mono { font-family: ui-monospace, monospace; }
 .receipt-amounts { padding: 1rem 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .a-row { display: flex; justify-content: space-between; font-size: 0.9375rem; }
 .a-row.muted { color: #94a3b8; }

@@ -22,16 +22,36 @@
         </div>
         <div>
           <div class="worker-name">{{ worker?.name }}</div>
-          <div class="worker-rate">S/. {{ worker?.hourlyRate }}/hora</div>
+          <div class="worker-rate">
+            S/. {{ worker?.hourlyRate }}/h
+            <!-- Tarifa de domingo: visible si la worker tiene una distinta a la
+                 normal. El tooltip aclara que solo aplica si trabaja ese día. -->
+            <template v-if="worker?.hourlyRateSunday && Number(worker.hourlyRateSunday) > 0 && Number(worker.hourlyRateSunday) !== Number(worker.hourlyRate)">
+              · Dom. S/. {{ worker.hourlyRateSunday }}/h
+              <span class="rate-info"
+                    :title="t('booking.sundayRateTooltip') || 'Tarifa aplicable solo si la trabajadora tiene disponibilidad ese día.'">ⓘ</span>
+            </template>
+          </div>
         </div>
       </div>
 
-      <!-- Select service type -->
+      <!-- Select service type — multi-select para que el cliente pueda contratar
+           varios servicios en una misma reserva (limpieza + cocina, por ej.).
+           Las opciones se limitan a los servicios que la trabajadora declara
+           ofrecer; así no se permite reservar algo que ella no hace. -->
       <div class="card">
         <label class="label-bold">{{ t('booking.serviceType') }}</label>
-        <select v-model="form.serviceType" class="input-field mt-1">
-          <option v-for="svc in worker?.serviceTypes || []" :key="svc" :value="svc">{{ t(`worker.services.${svc}`) }}</option>
-        </select>
+        <MultiSelectDropdown
+          v-model="form.serviceTypes"
+          :options="serviceOptionsForWorker"
+          :placeholder="t('booking.selectAtLeastOneService')"
+          :all-label="t('search.allServices')"
+          :allow-all="false"
+          class="mt-1"
+        />
+        <p class="hint-text">
+          {{ t('booking.servicesAvailable') }}: {{ (worker?.serviceTypes || []).length }}
+        </p>
       </div>
 
       <!-- Date and time selection -->
@@ -51,7 +71,7 @@
             <button @click="nextMonth" class="cal-nav">›</button>
           </div>
           <div class="cal-days">
-            <span v-for="d in ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']" :key="d" class="cal-day-label">{{ d }}</span>
+            <span v-for="d in weekdaysShort" :key="d" class="cal-day-label">{{ d }}</span>
           </div>
           <div class="cal-grid">
             <div v-for="blank in startBlank" :key="'b'+blank"></div>
@@ -155,8 +175,15 @@
 
       <!-- Booking summary — only visible once the client has selected time slots -->
       <div v-if="form.hours > 0" class="card summary-card">
-        <h3 class="card-title mb-4">Resumen</h3>
-        <div class="summary-row"><span>{{ form.hours }}h × S/. {{ worker?.hourlyRate }}</span><span>S/. {{ subtotal.toFixed(2) }}</span></div>
+        <h3 class="card-title mb-4"> {{ t('booking.summary')}}</h3>
+        <div class="summary-row">
+          <span>{{ form.hours }}h × S/. {{ effectiveRate.toFixed(2) }}</span>
+          <span>S/. {{ subtotal.toFixed(2) }}</span>
+        </div>
+        <!-- Aviso visible solo cuando se está aplicando tarifa de domingo. -->
+        <div v-if="showSundayNotice" class="sunday-notice">
+          {{ t('booking.sundayRateApplied') || 'Tarifa de domingo aplicada' }}
+        </div>
         <div class="summary-total">
           <span class="total-label">{{ t('booking.total') }}</span>
           <span class="total-amount">S/. {{ subtotal.toFixed(2) }}</span>
@@ -185,6 +212,7 @@ import api from "../../Shared/api.js";
 import { hasCoverage } from "../../Shared/constants/zones.js";
 import { useAuthStore } from "../../Shared/stores/auth.js";
 import { formatSuspendedUntil } from "../../Shared/utils/suspension.js";
+import MultiSelectDropdown from "../../Shared/components/MultiSelectDropdown.vue";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -207,28 +235,61 @@ const selectedDay = ref(null);
 // Disponibilidad de la trabajadora cargada del backend.
 const availability = ref([]);
 
-// Booking form data
-const form = ref({ serviceType: "", startTime: "08:00", endTime: "10:00", district: "", address: "", reference: "", notes: "", paymentMethodId: null, hours: 0 });
+// Booking form data — `serviceTypes` es una lista (multi-select): cliente puede
+// contratar varios servicios en una misma reserva, todos ofrecidos por la
+// trabajadora. El precio sigue siendo tarifa × horas (no se multiplica por
+// cantidad de servicios — son tareas, no items facturables).
+const form = ref({ serviceTypes: [], startTime: "08:00", endTime: "10:00", district: "", address: "", reference: "", notes: "", paymentMethodId: null, hours: 0 });
 // New payment method form
-const newPm = ref({ type: "cash", label: "", details: "" });
+const newPm = ref({ type: "yape", label: "", details: "" });
 
-// Payment types mapping. NOTA: ni izipay_card ni paypal son tipos de método aquí
-// — son CANALES que se gatillan automáticamente desde ClientBookingsView según
-// el tipo del método elegido ("card" -> Izipay, "paypal_card" -> PayPal). Aquí
-// solo listamos los tipos de método que el cliente puede registrar.
+// Lista de opciones para el dropdown multi-select, limitadas a los servicios
+// que la trabajadora declara ofrecer. Si no hay datos aún, lista vacía.
+const serviceOptionsForWorker = computed(() =>
+  (worker.value?.serviceTypes || []).map(v => ({ value: v, label: t(`worker.services.${v}`) }))
+);
+
+// Payment types mapping. Solo se ofrecen los canales soportados por la plataforma:
+// MercadoPago (pasarela, cubre tarjetas) y los manuales Yape/Plin/Bank.
+// "cash", "card" (legacy), "izipay_card" y "paypal_card" fueron removidos.
 const paymentTypes = computed(() => ({
-  cash: t("booking.paymentTypes.cash"), card: t("booking.paymentTypes.card"),
-  paypal_card: t("booking.paymentTypes.paypal_card"),
-  yape: t("booking.paymentTypes.yape"), plin: t("booking.paymentTypes.plin"),
+  mercadopago:   t("booking.paymentTypes.mercadopago") || "Mercado Pago",
+  yape:          t("booking.paymentTypes.yape"),
+  plin:          t("booking.paymentTypes.plin"),
   bank_transfer: t("booking.paymentTypes.bank_transfer"),
 }));
 
 // Computed properties for worker display
 const initials = computed(() => worker.value?.name?.split(" ").map(n => n[0]).slice(0,2).join("").toUpperCase() || "?");
 // Calculate pricing
-const subtotal = computed(() => (worker.value?.hourlyRate || 0) * form.value.hours);
-const platformFee = computed(() => subtotal.value * 0.10);
-const workerEarning = computed(() => subtotal.value - platformFee.value);
+// Tarifa efectiva según el día seleccionado. Si la fecha cae domingo Y la
+// trabajadora tiene tarifa de domingo configurada, usamos esa; sino, la normal.
+// El cálculo final lo hace el backend (server-side), pero replicamos la regla
+// aquí para que el cliente vea el monto correcto antes de confirmar.
+const effectiveRate = computed(() => {
+  const w = worker.value;
+  if (!w) return 0;
+  if (!form.value.date) return Number(w.hourlyRate) || 0;
+  const d = new Date(form.value.date + 'T00:00:00');
+  const isSunday = d.getDay() === 0;
+  if (isSunday && Number(w.hourlyRateSunday) > 0) return Number(w.hourlyRateSunday);
+  return Number(w.hourlyRate) || 0;
+});
+
+// True si la fecha seleccionada es domingo Y se le está aplicando la tarifa especial.
+// Lo usamos para mostrar un aviso al cliente debajo del resumen.
+const showSundayNotice = computed(() => {
+  const w = worker.value;
+  if (!w || !form.value.date) return false;
+  const d = new Date(form.value.date + 'T00:00:00');
+  return d.getDay() === 0 && Number(w.hourlyRateSunday) > 0;
+});
+
+const subtotal = computed(() => effectiveRate.value * form.value.hours);
+// Nota: no calculamos platformFee/workerEarning aquí. El cliente paga el total
+// y el backend, con la tasa de comisión vigente en PlatformSettings, decide el
+// desglose final en el momento del pago. Mostrar un cálculo del frontend con
+// una tasa hardcoded sería mentir al cliente si el admin la cambió.
 
 // Los distritos ofrecidos son las zonas donde la trabajadora atiende; así la
 // cobertura se valida contra la zona de servicio real de la trabajadora.
@@ -244,12 +305,38 @@ const districtHasCoverage = computed(
 const canBook = computed(() =>
   !auth.isSuspended &&
   availability.value.length > 0 &&
-  selectedDay.value && form.value.serviceType && form.value.district && districtHasCoverage.value &&
+  selectedDay.value && form.value.serviceTypes.length > 0 && form.value.district && districtHasCoverage.value &&
   form.value.address && form.value.paymentMethodId && form.value.hours > 0
 );
 
+const WEEKDAY_SHORT_KEYS = [
+  "booking.availability.sundayShort",
+  "booking.availability.mondayShort",
+  "booking.availability.tuesdayShort",
+  "booking.availability.wednesdayShort",
+  "booking.availability.thursdayShort",
+  "booking.availability.fridayShort",
+  "booking.availability.saturdayShort",
+];
+
+const weekdaysShort = computed(() => WEEKDAY_SHORT_KEYS.map(k => t(k)));
+
+const MONTHS = ["booking.availability.january",
+  "booking.availability.february",
+  "booking.availability.march",
+  "booking.availability.april",
+  "booking.availability.may",
+  "booking.availability.june",
+  "booking.availability.july",
+  "booking.availability.august",
+  "booking.availability.september",
+  "booking.availability.october",
+  "booking.availability.november",
+  "booking.availability.december"
+];
+
 // Calendar utilities
-const monthLabel = computed(() => new Date(viewYear.value, viewMonth.value).toLocaleDateString("es-PE", { month:"long", year:"numeric" }));
+const monthLabel = computed(() => `${t(MONTHS[viewMonth.value])} ${viewYear.value}`);
 const daysInMonth = computed(() => new Date(viewYear.value, viewMonth.value + 1, 0).getDate());
 const startBlank = computed(() => new Date(viewYear.value, viewMonth.value, 1).getDay());
 // Día de semana del día seleccionado (0=Dom...6=Sáb), o null si no hay selección.
@@ -318,8 +405,21 @@ function isUnavailableDay(d) {
 
 // Cuando cambia el día seleccionado, asegura que startTime/endTime estén dentro
 // de las franjas disponibles. Si no, las ajusta a la primera opción válida.
+// También sincroniza form.date con (year, month, selectedDay) → "YYYY-MM-DD".
+// Sin esta sincronización, los computed que dependen de form.date (effectiveRate,
+// showSundayNotice) nunca se enteraban del cambio y siempre asumían tarifa normal.
 watch(selectedDay, () => {
-  if (!selectedDay.value || !timeSlots.value.length) return;
+  if (!selectedDay.value) {
+    form.value.date = "";
+    return;
+  }
+  // Formato ISO "YYYY-MM-DD" para que `new Date(form.date + 'T00:00:00')`
+  // interprete bien la fecha en zona local sin saltos de día por timezone.
+  const m = String(viewMonth.value + 1).padStart(2, "0");
+  const d = String(selectedDay.value).padStart(2, "0");
+  form.value.date = `${viewYear.value}-${m}-${d}`;
+
+  if (!timeSlots.value.length) return;
   if (!timeSlots.value.includes(form.value.startTime)) {
     form.value.startTime = timeSlots.value[0];
   }
@@ -338,7 +438,7 @@ function calcHours() {
 }
 // Get payment method icon
 function paymentIcon(type) {
-  return { cash:"💵", card:"💳", paypal_card:"🅿️", yape:"📱", plin:"📲", bank_transfer:"🏦" }[type] || "💰";
+  return { mercadopago:"💳", yape:"📱", plin:"📲", bank_transfer:"🏦" }[type] || "💰";
 }
 
 // Add new payment method
@@ -347,13 +447,41 @@ async function addPaymentMethod() {
   paymentMethods.value.push(data);
   form.value.paymentMethodId = data.id;
   showAddPayment.value = false;
-  newPm.value = { type:"cash", label:"", details:"" };
+  newPm.value = { type:"yape", label:"", details:"" };
 }
 
 // Submit booking
 async function handleBook() {
-  submitting.value = true;
   error.value = "";
+
+  // Validación: al menos un servicio elegido.
+  if (form.value.serviceTypes.length === 0) {
+    error.value = t("booking.selectAtLeastOneService");
+    return;
+  }
+
+  // Validación: Dirección y Referencia no pueden contener SOLO números.
+  // Deben tener al menos una letra (acepta combinación letras+números, o solo
+  // letras). Aplico la regla únicamente cuando hay valor — la referencia es
+  // opcional, así que solo se valida si el usuario la llenó.
+  const addr = (form.value.address || "").trim();
+  // Para considerar "solo números" cuenta también espacios/símbolos numéricos.
+  const onlyNumbers = (s) => s.length > 0 && /^[\d\s.,\-]+$/.test(s);
+  if (!addr) {
+    error.value = t("booking.addressOnlyNumbers");
+    return;
+  }
+  if (onlyNumbers(addr)) {
+    error.value = t("booking.addressOnlyNumbers");
+    return;
+  }
+  const ref_ = (form.value.reference || "").trim();
+  if (ref_ && onlyNumbers(ref_)) {
+    error.value = t("booking.referenceOnlyNumbers");
+    return;
+  }
+
+  submitting.value = true;
   try {
     const dateStr = `${viewYear.value}-${String(viewMonth.value+1).padStart(2,"0")}-${String(selectedDay.value).padStart(2,"0")}`;
     // El backend espera un único campo Address. Componemos distrito + dirección
@@ -368,7 +496,11 @@ async function handleBook() {
     ].filter(Boolean).join(", ");
     await api.post("/bookings", {
       workerId: parseInt(route.params.id),
-      serviceType: form.value.serviceType,
+      // Enviamos la lista nueva. El backend prioriza `serviceTypes` y si está
+      // vacío cae al singular `serviceType` (legacy). Mandamos también el
+      // primero como `serviceType` por compatibilidad con cualquier middleware.
+      serviceTypes: form.value.serviceTypes,
+      serviceType: form.value.serviceTypes[0],
       date: dateStr,
       startTime: form.value.startTime,
       endTime: form.value.endTime,
@@ -378,10 +510,6 @@ async function handleBook() {
       notes: form.value.notes,
     });
 
-    // El pago se realiza DESPUÉS, cuando la trabajadora complete el servicio.
-    // Desde /client/bookings el cliente verá "Pagar Servicio" — si su método
-    // elegido era de tipo "card" se abrirá Izipay sandbox; en otro caso, modal
-    // manual de confirmación.
     toast.success(t("booking.bookingSuccess"));
     router.push("/client/bookings");
   } catch (e) {
@@ -400,7 +528,8 @@ onMounted(async () => {
     const av = await api.get(`/workers/${id}/availability`);
     availability.value = (av.data || []).filter(s => s.isAvailable);
   } catch { availability.value = []; }
-  if (w.data.serviceTypes?.length) form.value.serviceType = w.data.serviceTypes[0];
+  // El multi-select arranca vacío para que el cliente elija explícitamente
+  // qué servicios quiere contratar (no hay preselección por defecto).
   workerLoading.value = false;
 });
 </script>
@@ -484,6 +613,7 @@ onMounted(async () => {
 .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
 
 .hours-info { margin-top: 0.75rem; padding: 0.75rem; background: #eff6ff; border-radius: 0.5rem; font-size: 0.875rem; color: #2563eb; font-weight: 600; }
+.hint-text { margin-top: 0.5rem; font-size: 0.75rem; color: #64748b; }
 .mt-label { margin-top: 1rem; }
 .no-resize { resize: none; }
 
@@ -509,6 +639,8 @@ onMounted(async () => {
 .summary-warning { color: #ef4444; font-size: 0.875rem; }
 .summary-success { color: #10b981; font-size: 0.875rem; }
 .summary-total { border-top: 1px solid #a7f3d0; margin-top: 0.75rem; padding-top: 0.75rem; display: flex; justify-content: space-between; align-items: center; }
+.sunday-notice { background: #fef3c7; color: #92400e; border-left: 3px solid #f59e0b; padding: 0.5rem 0.75rem; border-radius: 0.375rem; font-size: 0.8125rem; margin-top: 0.5rem; }
+.rate-info { display: inline-block; margin-left: 0.25rem; color: #2563eb; cursor: help; font-size: 0.85em; }
 .total-label { font-weight: 700; font-size: 1.0625rem; color: #065f46; }
 .total-amount { font-weight: 800; font-size: 1.25rem; color: #2563eb; }
 

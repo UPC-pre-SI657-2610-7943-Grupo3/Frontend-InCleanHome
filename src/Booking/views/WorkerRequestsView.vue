@@ -27,7 +27,10 @@
             </div>
             <div>
               <div class="client-name">{{ b.clientName }}</div>
-              <div class="client-service">{{ t(`worker.services.${b.serviceType}`) }}</div>
+              <!-- Muestra todos los servicios del booking. Soporta la nueva lista
+                   `serviceTypes` (multi) y cae al singular `serviceType` para
+                   reservas viejas creadas antes del cambio. -->
+              <div class="client-service">{{ formatServices(b) }}</div>
             </div>
           </div>
           <span :class="statusBadge(b.status)">{{ t(`booking.status.${b.status}`) }}</span>
@@ -50,6 +53,11 @@
             <span class="total-amount">(total S/. {{ b.totalAmount }})</span>
           </div>
           <div v-if="b.status === 'completed'" class="payment-status-wrap">
+            <!-- Reportar cliente: la trabajadora también puede reportar perfiles
+                 sospechosos en servicios completados (espejo de lo que ya hace
+                 el cliente contra la trabajadora). El backend de reports ya es
+                 neutral (acepta cualquier dirección reporter→reported). -->
+            <button @click="reportTarget = { id: b.clientId, name: b.clientName }" class="btn btn-ghost btn-sm">⚐ {{ t('booking.report') }}</button>
             <span :class="['payment-badge', b.isPaid ? 'paid' : 'unpaid']">
               {{ b.isPaid ? '✅ Servicio Pagado' : '⏳ Servicio No Pagado' }}
             </span>
@@ -64,8 +72,9 @@
             <button @click="updateStatus(b.id, 'completed')" class="btn btn-success btn-sm">✅ {{ t('common.complete') }}</button>
             <router-link :to="{ path: `/worker/messages/${b.clientId}`, query: { name: b.clientName } }" class="btn btn-secondary btn-sm">💬 {{ t('common.message') }}</router-link>
           </div>
-          <!-- Completadas: sin botones de acción. El cobro se solicita desde /worker/payments,
-               el comprobante se ve desde /worker/history. -->
+          <!-- Completadas: sin botones de acción para el flujo de servicio. El
+               cobro se solicita desde /worker/payments, el comprobante desde
+               /worker/history. El botón Reportar va arriba en payment-status-wrap. -->
         </div>
       </div>
     </div>
@@ -85,6 +94,9 @@
 
     <!-- Reschedule modal -->
     <RescheduleModal v-if="rescheduleB" :booking="rescheduleB" @close="rescheduleB = null" @rescheduled="onRescheduled" />
+
+    <!-- Report modal: la trabajadora reporta al cliente del booking completado. -->
+    <ReportModal v-if="reportTarget" :target-user-id="reportTarget.id" target-role="client" :target-name="reportTarget.name" @close="reportTarget = null" />
   </div>
 </template>
 
@@ -95,6 +107,7 @@ import { useToastStore } from "../../Shared/stores/toast.js";
 import { useAuthStore } from "../../Shared/stores/auth.js";
 import api from "../../Shared/api.js";
 import RescheduleModal from "../../Shared/components/RescheduleModal.vue";
+import ReportModal from "../../Shared/components/ReportModal.vue";
 
 const { t } = useI18n();
 const toast = useToastStore();
@@ -104,6 +117,20 @@ const loading = ref(true);
 const activeTab = ref("pending");
 const rescheduleB = ref(null);
 const cancelB = ref(null);
+// reportTarget: { id, name } cuando la trabajadora abre el modal de reportar
+// a un cliente. Mientras es null el modal no se renderiza.
+const reportTarget = ref(null);
+
+// Devuelve la lista de servicios del booking como string legible.
+// Soporta ambos formatos: la nueva lista `serviceTypes` (multi) y el legacy
+// `serviceType` singular para reservas creadas antes del cambio.
+function formatServices(b) {
+  const list = Array.isArray(b.serviceTypes) && b.serviceTypes.length > 0
+    ? b.serviceTypes
+    : (b.serviceType ? [b.serviceType] : []);
+  if (list.length === 0) return "";
+  return list.map(s => t(`worker.services.${s}`)).join(", ");
+}
 
 async function onRescheduled() {
   toast.success("Reserva reprogramada. Pendiente de confirmación del cliente.");
@@ -336,7 +363,7 @@ onUnmounted(() => {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.payment-status-wrap { display: flex; align-items: center; }
+.payment-status-wrap { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
 .payment-badge {
   display: inline-flex;
   align-items: center;

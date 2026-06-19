@@ -11,7 +11,7 @@
     </div>
 
     <div v-else class="dashboard-content">
-      <!-- Pendiente de cobro Izipay (solo si hay algo pendiente) -->
+      <!-- Pendiente de cobro (solo si hay algo pendiente) -->
       <div v-if="pendingPayoutCount > 0" class="card pending-payout-card mb-6">
         <div class="pending-info">
           <div class="pending-icon">📥</div>
@@ -147,16 +147,6 @@
             </div>
           </div>
 
-          <!-- Direct Payments Info Card -->
-          <div class="card info-card">
-            <div class="info-content">
-              <span class="info-icon">⚡</span>
-              <div>
-                <div class="info-title">{{ t('workerPayments.receiveTitle') }}</div>
-                <p class="info-desc">{{ t('workerPayments.receiveDesc') }}</p>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -200,23 +190,25 @@ const totalEarnings = computed(() => (balance.value.totalEarnings || 0) + (balan
 const platformFee   = computed(() => balance.value.platformFeeTotal || 0);
 const netEarnings   = computed(() => balance.value.netEarnings || 0);
 
-// "Pendiente de cobro" — solo lo que vino vía Izipay y aún no se ha solicitado.
+// "Pendiente de cobro" — payments aún no liquidados al worker.
 const pendingPayout      = computed(() => balance.value.pendingPayout || 0);
 const pendingPayoutCount = computed(() => balance.value.pendingPayoutCount || 0);
 
 // Estado del botón "Solicitar Cobro".
 const requestingPayout = ref(false);
 
+// Métodos de cobro que la trabajadora puede registrar. Solo flujos donde
+// realmente puede recibir dinero por fuera: Yape, Plin, transferencia bancaria.
+// "cash" fue removido (no permite trazar comisión) y "mercadopago" no aplica:
+// es un canal de cobro al CLIENTE, no de payout a la trabajadora.
 const payoutTypes = computed(() => ({
-  yape: t("booking.paymentTypes.yape"),
-  plin: t("booking.paymentTypes.plin"),
+  yape:          t("booking.paymentTypes.yape"),
+  plin:          t("booking.paymentTypes.plin"),
   bank_transfer: t("booking.paymentTypes.bank_transfer"),
-  cash: t("booking.paymentTypes.cash"),
-  card: "Tarjeta",
 }));
 
 function paymentIcon(type) {
-  return { cash: "💵", card: "💳", yape: "📱", plin: "📲", bank_transfer: "🏦" }[type] || "💰";
+  return { yape: "📱", plin: "📲", bank_transfer: "🏦" }[type] || "💰";
 }
 
 async function fetchData() {
@@ -235,9 +227,9 @@ async function fetchData() {
 }
 
 /**
- * Solicita el cobro de TODOS los payments Izipay pendientes del worker.
+ * Solicita el cobro de TODOS los payments pendientes del worker.
  * El backend los marca como PayoutStatus=Completed (no se mueve dinero real
- * en esta simulación — las workers no tienen cuenta Izipay).
+ * en esta simulación — el cobro real va por fuera).
  */
 async function handleRequestPayout() {
   if (pendingPayoutCount.value === 0 || requestingPayout.value) return;
@@ -623,43 +615,6 @@ onMounted(fetchData);
 
 .submit-btn {
   font-weight: 700;
-}
-
-.info-card {
-  background: #f0fdf4;
-  border-color: #a7f3d0;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
-}
-
-.info-content {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-
-.info-icon {
-  font-size: 2rem;
-  background: #ecfdf5;
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.info-title {
-  font-weight: 700;
-  color: #065f46;
-  margin-bottom: 0.25rem;
-  font-size: 1.05rem;
-}
-
-.info-desc {
-  font-size: 0.875rem;
-  color: #047857;
-  margin: 0;
-  line-height: 1.4;
 }
 
 .spinner {

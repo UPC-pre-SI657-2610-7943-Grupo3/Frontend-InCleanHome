@@ -24,7 +24,9 @@
             </div>
             <div>
               <div class="worker-name">{{ b.workerName }}</div>
-              <div class="worker-service">{{ t(`worker.services.${b.serviceType}`) }}</div>
+              <!-- Soporta tanto la lista nueva `serviceTypes` como el campo
+                   legacy `serviceType` (reservas antiguas con un solo servicio). -->
+              <div class="worker-service">{{ formatServices(b) }}</div>
             </div>
           </div>
           <!-- Status badge -->
@@ -45,7 +47,7 @@
             <span class="total-amount">S/. {{ b.totalAmount }}</span>
           </div>
           <div class="action-buttons">
-            <!-- Receipt for paid bookings -->
+            <!-- Recibo de Pago: visible para reservas completadas y pagadas. -->
             <button v-if="b.status === 'completed' && isPaid(b.id)" @click="openReceipt(b)" class="btn btn-outline btn-sm">🧾 {{ t('booking.viewReceipt') }}</button>
             <!-- Rating button if completed and not reviewed -->
             <button v-if="b.status === 'completed' && !b._reviewed" @click="openReview(b)" class="btn btn-outline btn-sm">⭐ {{ t('common.qualify') }} </button>
@@ -53,7 +55,7 @@
             <template v-if="b.status === 'completed'">
               <!-- Already paid: green badge -->
               <span v-if="isPaid(b.id)" class="badge badge-green">💰 {{ t('workerPayments.paid') }}</span>
-              <!-- Not paid yet: shows "Pagar Servicio" button (regardless of channel: card opens Izipay, others open manual modal) -->
+              <!-- Not paid yet: shows "Pagar Servicio" button (opens MercadoPagoPaymentModal for mercadopago, manual modal otherwise) -->
               <button v-else @click="openPayModal(b)" class="btn btn-primary btn-sm">💵 {{ t('workerPayments.payTitle') }}</button>
             </template>
             <!-- Report worker -->
@@ -96,8 +98,8 @@
       </div>
     </div>
 
-    <!-- Manual pay modal (yape/plin/bank/cash) — pops when channel is NEITHER gateway -->
-    <div v-if="payB && payChannel !== 'izipay_card' && payChannel !== 'paypal'" class="modal-overlay" @click.self="payB = null">
+    <!-- Manual pay modal (yape/plin/bank) — pops when channel is NOT the gateway. -->
+    <div v-if="payB && payChannel !== 'mercadopago'" class="modal-overlay" @click.self="payB = null">
       <div class="modal-box shadow-sm" style="border:1px solid #e2e8f0; max-width:440px;">
         <h3 class="card-title mb-2">💵 {{ t('workerPayments.payTitle') }}</h3>
         <p class="muted-text mb-4">{{ t('workerPayments.paySubtitle') }}</p>
@@ -115,7 +117,7 @@
             </div>
             <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; font-size:0.875rem;">
               <span class="muted-text">Servicio:</span>
-              <span style="font-weight:600; color:#475569;">{{ t(`worker.services.${payB.serviceType}`) }}</span>
+              <span style="font-weight:600; color:#475569;">{{ formatServices(payB) }}</span>
             </div>
             <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; font-size:0.875rem;">
               <span class="muted-text">Método elegido:</span>
@@ -127,8 +129,10 @@
             </div>
           </div>
 
-          <!-- Worker payout methods preview (informational only) -->
-          <div v-if="payChannel !== 'cash'" class="mb-4">
+          <!-- Worker payout methods preview (informational only). Para flujos
+               manuales el cliente debe saber a qué número Yape/Plin o cuenta
+               bancaria depositar. -->
+          <div class="mb-4">
             <label class="label-bold" style="display:block; margin-bottom:0.5rem; font-size:0.85rem; font-weight:600; color:#475569;">Cuentas de la Trabajadora:</label>
 
             <div v-if="workerPayoutMethods.length === 0" class="alert error-box" style="background:#fffbeb; color:#b45309; border-color:#fef3c7; font-size:0.8125rem; line-height:1.4; padding:0.75rem; margin-top:0.5rem;">
@@ -150,11 +154,6 @@
             </div>
           </div>
 
-          <!-- Cash hint -->
-          <div v-if="payChannel === 'cash'" class="info-box mb-4" style="background:#f0fdf4; border-left:3px solid #16a34a; padding:0.75rem; font-size:0.8125rem; color:#166534; border-radius:0.5rem;">
-            💵 Al confirmar, registramos que pagaste en efectivo a la trabajadora.
-          </div>
-
           <!-- Checkout actions -->
           <div class="modal-actions">
             <button @click="payB = null" class="btn btn-secondary flex-1" :disabled="payingManual">{{ t('common.cancel') }}</button>
@@ -167,16 +166,16 @@
       </div>
     </div>
 
-    <!-- Izipay sandbox modal — pops when channel IS izipay_card -->
-    <IzipayPaymentModal
-      v-if="payB && payChannel === 'izipay_card'"
-      :booking-id="payB.id"
-      @success="onIzipaySuccess"
-      @failed="onIzipayFailed"
+    <!-- Mercado Pago modal — pops when channel IS mercadopago. Redirige al
+         checkout de MP. Al volver, PaymentSuccessView confirma el pago. -->
+    <MercadoPagoPaymentModal
+      v-if="payB && payChannel === 'mercadopago'"
+      :booking="payB"
+      @paid="onPaymentConfirmed"
       @close="payB = null" />
 
-    <!-- Receipt modal -->
-    <ReceiptModal v-if="receiptBooking" :booking="receiptBooking" :payment="receiptPayment" @close="closeReceipt" />
+    <!-- Receipt modal (mode=client → título "Recibo de Pago") -->
+    <ReceiptModal v-if="receiptBooking" :booking="receiptBooking" :payment="receiptPayment" mode="client" @close="closeReceipt" />
 
     <!-- Report modal -->
     <ReportModal v-if="reportTarget" :target-user-id="reportTarget.id" target-role="worker" :target-name="reportTarget.name" @close="reportTarget = null" />
@@ -189,6 +188,7 @@
 <script setup>
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { useToastStore } from "../../Shared/stores/toast.js";
 import { useAuthStore } from "../../Shared/stores/auth.js";
 import api from "../../Shared/api.js";
@@ -199,11 +199,12 @@ import {
 import ReceiptModal from "../../Shared/components/ReceiptModal.vue";
 import ReportModal from "../../Shared/components/ReportModal.vue";
 import RescheduleModal from "../../Shared/components/RescheduleModal.vue";
-import IzipayPaymentModal from "../../Payments/components/IzipayPaymentModal.vue";
+import MercadoPagoPaymentModal from "../../Payments/components/MercadoPagoPaymentModal.vue";
 
 const { t } = useI18n();
 const toast = useToastStore();
 const auth = useAuthStore();
+const router = useRouter();
 
 const bookings = ref([]);
 const loading = ref(true);
@@ -225,7 +226,7 @@ const payingManual = ref(false);
 // Mapas con el estado actual sincronizado del backend.
 // paymentsMap[bookingId] = ServicePayment | null (null = no pagado)
 const paymentsMap = ref(new Map());
-// clientMethodsMap[paymentMethodId] = type (yape/plin/bank_transfer/cash/card)
+// clientMethodsMap[paymentMethodId] = type (yape/plin/bank_transfer/mercadopago)
 // Lo usamos para saber qué canal usar al pagar cada booking.
 const clientMethodsMap = ref(new Map());
 
@@ -233,60 +234,55 @@ function isPaid(bookingId) {
   return paymentsMap.value.get(bookingId) != null;
 }
 
+// Devuelve la lista de servicios del booking joineada con coma. Soporta el
+// nuevo array `serviceTypes` (multi-servicio) y el legacy `serviceType` para
+// reservas creadas antes del cambio.
+function formatServices(b) {
+  if (!b) return "";
+  const list = Array.isArray(b.serviceTypes) && b.serviceTypes.length > 0
+    ? b.serviceTypes
+    : (b.serviceType ? [b.serviceType] : []);
+  if (list.length === 0) return "";
+  return list.map(s => t(`worker.services.${s}`)).join(", ");
+}
+
 // El "canal de pago" del booking activo (cuando hay payB).
 // Se calcula a partir del paymentMethodId del booking + el type del método del cliente.
+//   - mercadopago: abre el MercadoPagoPaymentModal y redirige al checkout MP.
+//   - yape/plin/bank_transfer: flujo manual (cliente paga por fuera y confirma).
+// Los canales legacy (card/paypal_card/cash/izipay_card) ya no se ofrecen al
+// crear métodos nuevos; mantenemos defaults sensatos para bookings históricos.
 const payChannel = computed(() => {
   if (!payB.value) return null;
   const pmType = clientMethodsMap.value.get(payB.value.paymentMethodId);
-  // "card" → tarjeta vía Izipay sandbox. "paypal_card" → PayPal. Resto → manual.
-  if (pmType === "card") return "izipay_card";
-  if (pmType === "paypal_card") return "paypal";
-  if (pmType === "yape") return "yape";
-  if (pmType === "plin") return "plin";
+  if (pmType === "mercadopago") return "mercadopago";
+  if (pmType === "yape")          return "yape";
+  if (pmType === "plin")          return "plin";
   if (pmType === "bank_transfer") return "bank_transfer";
-  if (pmType === "cash") return "cash";
-  // Default razonable si no se conoce el tipo: cash (no genera Izipay).
-  return "cash";
+  // Fallback para métodos legacy (card / paypal_card / cash): los mapeamos a MP.
+  return "mercadopago";
 });
 
 function channelLabel(c) {
   return ({
-    yape: "Yape",
-    plin: "Plin",
+    mercadopago:   "Mercado Pago",
+    yape:          "Yape",
+    plin:          "Plin",
     bank_transfer: "Transferencia bancaria",
-    cash: "Efectivo",
-    izipay_card: "Tarjeta (Izipay)",
-    paypal: "PayPal",
   })[c] || c;
 }
 
 function paymentIcon(type) {
-  return ({ cash: "💵", card: "💳", yape: "📱", plin: "📲", bank_transfer: "🏦", paypal_card: "🅿️", izipay_card: "💳" })[type] || "💰";
+  return ({ mercadopago: "💳", yape: "📱", plin: "📲", bank_transfer: "🏦" })[type] || "💰";
 }
 
 async function openPayModal(b) {
   payB.value = b;
 
-  // Tarjeta Izipay: el IzipayPaymentModal hace todo solo, no necesitamos cargar
-  // las cuentas de la worker. Cash tampoco las necesita.
-  if (payChannel.value === "izipay_card" || payChannel.value === "cash") {
-    return;
-  }
-
-  // PayPal: en lugar de abrir un modal local, llamamos al backend para crear
-  // la orden y nos lleva a sandbox.paypal.com. Al volver, PaymentSuccessView
-  // se encarga del capture y de marcar el pago.
-  if (payChannel.value === "paypal") {
-    try {
-      const { data } = await api.post("/payments/paypal/create-order", { bookingId: b.id });
-      // Guardamos el bookingId para que PaymentSuccessView lo recupere tras el redirect.
-      sessionStorage.setItem("paypal_pending_booking_id", String(b.id));
-      // window.location en lugar de router.push: salimos del SPA hacia PayPal.
-      window.location.href = data.approveLink;
-    } catch (e) {
-      toast.error(e?.response?.data?.error || "No se pudo iniciar el pago con PayPal");
-      payB.value = null;
-    }
+  // Pago vía Mercado Pago: el modal MercadoPagoPaymentModal hace el flujo solo
+  // (crea preferencia + redirige a MP). No necesitamos cargar las cuentas de
+  // cobro de la worker.
+  if (payChannel.value === "mercadopago") {
     return;
   }
 
@@ -307,7 +303,7 @@ async function confirmManualPay() {
   if (!payB.value || payingManual.value) return;
   payingManual.value = true;
   try {
-    const channel = payChannel.value; // yape | plin | bank_transfer | cash
+    const channel = payChannel.value; // yape | plin | bank_transfer
     const payment = await payBookingManual(payB.value.id, channel);
     paymentsMap.value.set(payB.value.id, payment);
     toast.success(t("common.success"));
@@ -317,28 +313,6 @@ async function confirmManualPay() {
   } finally {
     payingManual.value = false;
   }
-}
-
-function onIzipaySuccess(payload) {
-  // El backend ya creó el ServicePayment vía /confirm-simulation.
-  // payload tiene { paymentId, amount, workerEarning, platformFee, orderId, simulated }
-  // Refrescamos el mapa para reflejar el pago.
-  paymentsMap.value.set(payB.value.id, {
-    id: payload.paymentId,
-    bookingId: payB.value.id,
-    amount: payload.amount,
-    workerEarning: payload.workerEarning,
-    platformFee: payload.platformFee,
-    channel: "izipay_card",
-    izipayOrderId: payload.orderId,
-  });
-  toast.success(t("common.success") + " ✓");
-  payB.value = null;
-}
-
-function onIzipayFailed(reason) {
-  toast.error(reason || "El pago no se completó");
-  payB.value = null;
 }
 
 function openReceipt(b) {
@@ -353,6 +327,14 @@ function closeReceipt() {
 
 async function onRescheduled() {
   toast.success("Reserva reprogramada. Pendiente de confirmación.");
+  await load();
+}
+
+// Cuando el modal de MP confirma el pago (flujo localhost), recargamos las
+// reservas para que aparezca como pagada. En deploy, este handler nunca se
+// dispara porque MP redirige a /payment-success y la vista de ahí hace el reload.
+async function onPaymentConfirmed() {
+  toast.success("¡Pago confirmado!");
   await load();
 }
 

@@ -29,19 +29,29 @@
           </div>
           <div class="hc-info">
             <div class="hc-name">{{ otherName(b) }}</div>
-            <div class="hc-service">{{ serviceLabel(b.serviceType) }}</div>
+            <div class="hc-service">{{ serviceLabel(b) }}</div>
             <div class="hc-date">📅 {{ b.date }} · {{ b.startTime }}–{{ b.endTime }}</div>
           </div>
         </div>
         <div class="hc-right">
           <span :class="statusBadge(b.status)">{{ t(`booking.status.${b.status}`) }}</span>
           <div class="hc-amount">S/. {{ num(b.totalAmount) }}</div>
-          <button v-if="b.status === 'completed' && isPaid(b.id)" @click="openReceipt(b)" class="link-btn">{{ t('booking.viewReceipt') }}</button>
+          <button v-if="b.status === 'completed' && isPaid(b.id)"
+                  @click="openReceipt(b)" class="link-btn">
+            {{ isWorker
+                ? (t('booking.viewWorkerOrder') || 'Detalle de Orden')
+                : t('booking.viewReceipt') }}
+          </button>
         </div>
       </div>
     </div>
 
-    <ReceiptModal v-if="receiptBooking" :booking="receiptBooking" :payment="receiptPayment" :show-worker-net="isWorker" @close="closeReceipt" />
+    <!-- mode dictates the modal title: 'client' → "Recibo de Pago",
+         'worker' → "Detalle de Orden". show-worker-net stays for the net amount row. -->
+    <ReceiptModal v-if="receiptBooking" :booking="receiptBooking" :payment="receiptPayment"
+                  :show-worker-net="isWorker"
+                  :mode="isWorker ? 'worker' : 'client'"
+                  @close="closeReceipt" />
   </div>
 </template>
 
@@ -78,7 +88,16 @@ function otherName(b) { return isWorker.value ? b.clientName : b.workerName; }
 function otherPhoto(b) { return isWorker.value ? b.clientPhotoUrl : b.workerPhotoUrl; }
 function initials(name) { return (name || "U").split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase(); }
 function num(v) { return (Number(v) || 0).toFixed(2); }
-function serviceLabel(s) { const k = `worker.services.${s}`; const tr = t(k); return tr === k ? s : tr; }
+// Acepta booking entero o string. Si trae lista nueva `serviceTypes`, la
+// joinea con coma; fallback al singular `serviceType` para reservas viejas.
+function serviceLabel(b) {
+  const translate = (s) => { const k = `worker.services.${s}`; const tr = t(k); return tr === k ? s : tr; };
+  if (typeof b === "string") return translate(b);
+  const list = Array.isArray(b?.serviceTypes) && b.serviceTypes.length > 0
+    ? b.serviceTypes
+    : (b?.serviceType ? [b.serviceType] : []);
+  return list.map(translate).join(", ");
+}
 function statusBadge(s) {
   return { completed: "badge badge-green", cancelled: "badge badge-gray" }[s] || "badge badge-gray";
 }

@@ -34,8 +34,8 @@ export async function fetchPaymentsForBookings(bookingIds) {
 }
 
 /**
- * Registra el pago de un booking por canal manual (yape/plin/bank_transfer/cash).
- * Para tarjeta el flujo es vía /payments/izipay/* (no usar este).
+ * Registra el pago de un booking por canal manual (yape/plin/bank_transfer).
+ * Para Mercado Pago el flujo es vía /payments/mercadopago/* (no usar este).
  */
 export async function payBookingManual(bookingId, channel) {
   const { data } = await api.post(`/service-payments/booking/${bookingId}/pay-manual`, {
@@ -61,7 +61,7 @@ export async function getMyWorkerBalance() {
 }
 
 /**
- * Worker solicita el cobro de todos sus pagos Izipay pendientes.
+ * Worker solicita el cobro de todos sus pagos pendientes.
  * Devuelve { payoutsProcessed: N }.
  */
 export async function requestWorkerPayout() {

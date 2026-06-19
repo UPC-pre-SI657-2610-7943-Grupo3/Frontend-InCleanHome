@@ -57,6 +57,15 @@
           <label class="label-bold">{{ t('worker.hourlyRate') }}</label>
           <input v-model.number="form.hourlyRate" type="number" class="input-field input-small" min="10" step="5" />
         </div>
+        <!-- Tarifa de domingo: obligatoria. Si la trabajadora trabaja los
+             domingos se aplica esta tarifa al cliente; sino, el calendario
+             bloquea automáticamente los domingos. -->
+        <div class="form-group">
+          <label class="label-bold">{{ t('booking.hourlyRateSunday') || 'Tarifa por hora — Domingos (S/.)' }}</label>
+          <input v-model.number="form.hourlyRateSunday" type="number"
+                 class="input-field input-small" min="0" step="5" required />
+          <p class="hint-small">{{ t('booking.hourlyRateSundayHelp') || 'En caso trabajes los domingos, se aplicará esta tarifa.' }}</p>
+        </div>
         <div class="grid-2-cols">
           <div class="form-group">
             <label class="label-bold">{{ t('worker.serviceTypes') }}</label>
@@ -120,7 +129,7 @@ const saving = ref(false);
 const success = ref(false);
 const error = ref("");
 
-const form = ref({ name: "", phone: "", age: 25, experienceYears: 1, hourlyRate: 25, serviceTypes: [], zones: [], bio: "" });
+const form = ref({ name: "", phone: "", age: 25, experienceYears: 1, hourlyRate: 25, hourlyRateSunday: 25, serviceTypes: [], zones: [], bio: "" });
 const initials = computed(() => (auth.user?.name || "W").split(" ").map(n => n[0]).slice(0,2).join("").toUpperCase());
 
 // Foto de perfil — se carga y guarda exclusivamente en el backend.
@@ -170,10 +179,53 @@ const zoneOptions = computed(() => [
 ].map(v => ({ value: v, label: t(`worker.zones.${v}`) })));
 
 async function save() {
-  saving.value = true;
   error.value = "";
+
+  // ── Validaciones de formato ─────────────────────────────────────────
+  // Nombre: solo letras (incluye tildes, ñ y espacios). Requerido.
+  const name = (form.value.name || "").trim();
+  if (!name) {
+    error.value = t('auth.profileIncomplete');
+    return;
+  }
+  const nameRegex = /^[A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]+$/;
+  if (!nameRegex.test(name)) {
+    error.value = t('auth.nameInvalid');
+    return;
+  }
+  // Teléfono: solo dígitos y exactamente 9.
+  const phone = (form.value.phone || "").trim();
+  if (!/^\d{9}$/.test(phone)) {
+    error.value = t('auth.phoneInvalid');
+    return;
+  }
+  // Edad: número válido, rango 18-80 (consistente con el formulario y backend).
+  const age = Number(form.value.age);
+  if (!Number.isInteger(age) || age < 18 || age > 80) {
+    error.value = t('auth.ageInvalid');
+    return;
+  }
+
+  // ── Completitud de perfil ──────────────────────────────────────────
+  // La trabajadora debe tener al menos un servicio y una zona configurados,
+  // y una tarifa válida, para que su perfil sea ofertable.
+  if (!Array.isArray(form.value.serviceTypes) || form.value.serviceTypes.length === 0) {
+    error.value = t('auth.profileIncomplete');
+    return;
+  }
+  if (!Array.isArray(form.value.zones) || form.value.zones.length === 0) {
+    error.value = t('auth.profileIncomplete');
+    return;
+  }
+  const rate = Number(form.value.hourlyRate);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    error.value = t('auth.profileIncomplete');
+    return;
+  }
+
+  saving.value = true;
   try {
-    await api.put("/workers/me/profile", form.value);
+    await api.put("/workers/me/profile", { ...form.value, name, phone, age });
     success.value = true;
     setTimeout(() => success.value = false, 3000);
   } catch (e) {
@@ -184,7 +236,17 @@ async function save() {
 onMounted(async () => {
   try {
     const { data } = await api.get("/workers/me/profile");
-    form.value = { name: data.name || "", phone: data.phone || "", age: data.age || 25, experienceYears: data.experienceYears || 1, hourlyRate: data.hourlyRate || 25, serviceTypes: data.serviceTypes || [], zones: data.zones || [], bio: data.bio || "" };
+    form.value = {
+      name: data.name || "",
+      phone: data.phone || "",
+      age: data.age || 25,
+      experienceYears: data.experienceYears || 1,
+      hourlyRate: data.hourlyRate || 25,
+      hourlyRateSunday: data.hourlyRateSunday || data.hourlyRate || 25,
+      serviceTypes: data.serviceTypes || [],
+      zones: data.zones || [],
+      bio: data.bio || ""
+    };
     if (data.photoUrl) photoUrl.value = data.photoUrl;
   } catch {} finally { loading.value = false; }
 });

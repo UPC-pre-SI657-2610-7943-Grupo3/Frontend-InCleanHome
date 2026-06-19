@@ -47,7 +47,7 @@
         <button @click="nextMonth" class="cal-nav-btn">›</button>
       </div>
       <div class="cal-weekdays">
-        <span v-for="d in ['D','L','M','M','J','V','S']" :key="d">{{ d }}</span>
+        <span v-for="d in weekdaysShort" :key="d" class="cal-day-label">{{ d }}</span>
       </div>
       <div class="cal-grid">
         <div v-for="b in startBlank" :key="'b'+b"></div>
@@ -69,7 +69,7 @@
               <span class="bk-client">{{ b.clientName }}</span>
               <span :class="['bk-badge', `bk-${b.status}`]">{{ t(statusLabel(b.status)) }}</span>
             </div>
-            <div class="bk-service">{{ serviceLabel(b.serviceType) }} · {{ b.address?.slice(0, 60) }}</div>
+            <div class="bk-service">{{ serviceLabel(b) }} · {{ b.address?.slice(0, 60) }}</div>
           </div>
         </div>
         <p v-else class="empty-day">{{ t('booking.availability.noreservations')}}</p>
@@ -151,6 +151,18 @@ const viewMonth = ref(today.getMonth());
 const selectedDay = ref(null);
 const bookings = ref([]);
 
+const WEEKDAY_SHORT_KEYS = [
+  "booking.availability.sundayShort",
+  "booking.availability.mondayShort",
+  "booking.availability.tuesdayShort",
+  "booking.availability.wednesdayShort",
+  "booking.availability.thursdayShort",
+  "booking.availability.fridayShort",
+  "booking.availability.saturdayShort",
+];
+
+const weekdaysShort = computed(() => WEEKDAY_SHORT_KEYS.map(k => t(k)));
+
 const MONTHS = ["booking.availability.january",
   "booking.availability.february",
   "booking.availability.march",
@@ -197,8 +209,15 @@ function selectDay(d) { selectedDay.value = d; }
 function statusLabel(s) {
   return ({ pending: "booking.status.pending", accepted: "booking.status.accepted", completed: "booking.status.completed", cancelled: "booking.status.cancelled", rejected: "booking.status.rejected" })[s] || s;
 }
-function serviceLabel(s) {
-  const k = `worker.services.${s}`; const tr = t(k); return tr === k ? s : tr;
+// Acepta el booking completo o un string. Si el booking trae la lista nueva
+// `serviceTypes`, la joinea con coma; si no, cae al singular `serviceType`.
+function serviceLabel(b) {
+  const translate = (s) => { const k = `worker.services.${s}`; const tr = t(k); return tr === k ? s : tr; };
+  if (typeof b === "string") return translate(b);
+  const list = Array.isArray(b?.serviceTypes) && b.serviceTypes.length > 0
+    ? b.serviceTypes
+    : (b?.serviceType ? [b.serviceType] : []);
+  return list.map(translate).join(", ");
 }
 </script>
 

@@ -19,13 +19,17 @@ const routes = [
   // Pending approval (worker logueada esperando admin).
   { path: "/pending-approval", component: () => import("./IAM/views/PendingApprovalView.vue"), meta: { requiresAuth: true } },
 
-  // PayPal: pantallas de retorno tras el redirect a sandbox.paypal.com.
-  // Tienen que coincidir EXACTAMENTE con PayPal:ReturnUrl / PayPal:CancelUrl en
-  // appsettings.json. Las marcamos como public para que el guard del router no
-  // pelee — la captura interna requiere JWT propio igualmente (lo verifica la
-  // vista por su cuenta y muestra error si no está logueado).
-  { path: "/client/payment-success", component: () => import("./IAM/views/PaymentSuccessView.vue"), meta: { public: true } },
-  { path: "/client/payment-cancel",  component: () => import("./IAM/views/PaymentCancelView.vue"),  meta: { public: true } },
+  // Mercado Pago: pantallas de retorno tras el redirect al checkout.
+  // Las URLs deben coincidir EXACTAMENTE con MercadoPago:FrontendBaseUrl en el
+  // backend (back_urls success/failure/pending). Las marcamos public porque al
+  // volver desde MP el query string es lo único que portamos; la vista valida
+  // sesión y muestra el resultado.
+  // Aceptamos las dos formas para soportar links históricos (/client/...) y
+  // nuevos (/payment-...). MP solo llama a las nuevas.
+  { path: "/payment-success",         component: () => import("./IAM/views/PaymentSuccessView.vue"), meta: { public: true } },
+  { path: "/payment-failure",         component: () => import("./IAM/views/PaymentCancelView.vue"),  meta: { public: true } },
+  { path: "/client/payment-success",  component: () => import("./IAM/views/PaymentSuccessView.vue"), meta: { public: true } },
+  { path: "/client/payment-cancel",   component: () => import("./IAM/views/PaymentCancelView.vue"),  meta: { public: true } },
 
   // ── Cliente ─────────────────────────────────────────────────────────────
   {
@@ -58,6 +62,10 @@ const routes = [
       { path: "approve", component: () => import("./Admin/views/AdminApproveView.vue") },
       { path: "reports", component: () => import("./Admin/views/AdminReportsView.vue") },
       { path: "suspend", component: () => import("./Admin/views/AdminSuspendView.vue") },
+      // F2: bandeja de reclamos de suspensión (apelaciones de usuarios suspendidos).
+      { path: "appeals", component: () => import("./Admin/views/AdminSuspensionAppealsView.vue") },
+      // F3: configuración global (tasa de comisión).
+      { path: "settings", component: () => import("./Admin/views/AdminSettingsView.vue") },
     ],
   },
 
