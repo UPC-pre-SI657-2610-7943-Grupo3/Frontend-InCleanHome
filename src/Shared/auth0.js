@@ -15,7 +15,7 @@
 import { createAuth0 } from "@auth0/auth0-vue";
 
 export const isAuth0Enabled =
-  String(import.meta.env.VITE_AUTH0_ENABLED || "false").toLowerCase() === "true";
+  String(import.meta.env.VITE_AUTH0_ENABLED || "true").toLowerCase() === "true";
 
 export const auth0Plugin = isAuth0Enabled
   ? createAuth0({
